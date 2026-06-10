@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import date, timedelta
 from typing import Any
@@ -13,6 +14,9 @@ from app.db.repositories.organization_repository import OrganizationRepository
 from app.db.repositories.subscription_repository import SubscriptionRepository
 from app.schemas.auth import AuthOrganization, AuthResponse, AuthUser, LoginRequest, SignupRequest
 from app.services.base import BaseService
+
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService(BaseService):
@@ -58,9 +62,11 @@ class AuthService(BaseService):
             )
             self._create_default_subscription_if_available(organization.id)
         except Exception as exc:
+            logger.exception("Signup post-auth provisioning failed for auth user %s", user_id)
+            self._cleanup_auth_user_after_failed_signup(user_id)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Signup post-auth provisioning failed: {exc}",
+                detail="Signup provisioning failed. Please try again.",
             ) from exc
 
         access_token = self._session_value(auth_response, "access_token")
@@ -257,3 +263,16 @@ class AuthService(BaseService):
                 return candidate
 
         raise RuntimeError("Unable to generate a unique organization slug")
+
+    def _cleanup_auth_user_after_failed_signup(self, user_id: UUID) -> None:
+        auth_admin = self._read_attr(self.service_client.auth, "admin")
+        delete_user = self._read_attr(auth_admin, "delete_user")
+        if not callable(delete_user):
+            # TODO: Current Supabase SDK does not expose admin.delete_user here; add auth cleanup when available.
+            logger.error("Supabase admin auth user deletion is not available; failed signup user remains: %s", user_id)
+            return
+
+        try:
+            delete_user(str(user_id))
+        except Exception:
+            logger.exception("Failed to cleanup Supabase auth user after signup provisioning failure: %s", user_id)
