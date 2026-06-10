@@ -8,6 +8,7 @@ from pydantic import Field
 
 from app.db.models.common import (
     BasePayload,
+    BaseIdRecord,
     BaseRecord,
     ChannelType,
     ConversationStatus,
@@ -19,10 +20,10 @@ from app.db.models.common import (
     ProductStatus,
 )
 
-BaseReadModel = BaseRecord
+BaseReadModel = BaseIdRecord
 
 
-class OrganizationRead(BaseRecord):
+class OrganizationRead(BaseIdRecord):
     name: str
     slug: str | None = None
     status: OrganizationStatus
@@ -371,7 +372,7 @@ class LeadEventCreate(BasePayload):
     metadata: dict = Field(default_factory=dict)
 
 
-class SubscriptionPlanRead(BaseRecord):
+class SubscriptionPlanRead(BaseIdRecord):
     name: str
     slug: str
     status: str

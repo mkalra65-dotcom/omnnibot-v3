@@ -109,12 +109,15 @@ class BasePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class BaseRecord(BasePayload):
+class BaseIdRecord(BasePayload):
     id: UUID
-    organization_id: UUID
     created_at: datetime | None = None
     updated_at: datetime | None = None
     deleted_at: datetime | None = None
+
+
+class BaseRecord(BaseIdRecord):
+    organization_id: UUID
 
 
 class TimestampRange(BasePayload):
