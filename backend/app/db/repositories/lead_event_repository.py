@@ -1,14 +1,13 @@
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from supabase import Client
 
-from app.db.models.common import PaginationOptions, RepositoryPage
+from app.db.models.common import LeadStage, PaginationOptions, RepositoryPage
 from app.db.models.queries import LeadEventFilters, SortOptions
 from app.db.models.records import LeadEventCreate, LeadEventRead
-from app.db.repositories.base_repository import BaseRepository
+from app.db.repositories.base_repository import BaseRepository, OrganizationContext
 
 
 class LeadEventRepository(BaseRepository[LeadEventRead, LeadEventCreate, LeadEventCreate, LeadEventFilters]):
@@ -19,57 +18,54 @@ class LeadEventRepository(BaseRepository[LeadEventRead, LeadEventCreate, LeadEve
     def __init__(self, client: Client) -> None:
         super().__init__(client)
 
-    def create(self, organization_id: UUID, payload: LeadEventCreate | dict[str, Any]) -> LeadEventRead:
-        return super().create(organization_id, payload)
-
     def list_by_customer(
         self,
-        organization_id: UUID,
+        organization_id: UUID | OrganizationContext,
         customer_id: UUID,
+        filters: LeadEventFilters | None = None,
         pagination: PaginationOptions | None = None,
         sort: SortOptions | None = None,
     ) -> RepositoryPage[LeadEventRead]:
-        return self._list_scoped(organization_id, {"customer_id": str(customer_id)}, pagination, sort)
+        query = self._scoped_select(organization_id).eq("customer_id", str(customer_id))
+        query = self._apply_filters(query, filters)
+        return self._list_with_query(query, pagination=pagination, sort=sort)
 
     def list_by_conversation(
         self,
-        organization_id: UUID,
+        organization_id: UUID | OrganizationContext,
         conversation_id: UUID,
+        filters: LeadEventFilters | None = None,
         pagination: PaginationOptions | None = None,
         sort: SortOptions | None = None,
     ) -> RepositoryPage[LeadEventRead]:
-        return self._list_scoped(organization_id, {"conversation_id": str(conversation_id)}, pagination, sort)
+        query = self._scoped_select(organization_id).eq("conversation_id", str(conversation_id))
+        query = self._apply_filters(query, filters)
+        return self._list_with_query(query, pagination=pagination, sort=sort)
+
+    def list_by_stage(
+        self,
+        organization_id: UUID | OrganizationContext,
+        lead_stage: LeadStage,
+        pagination: PaginationOptions | None = None,
+        sort: SortOptions | None = None,
+    ) -> RepositoryPage[LeadEventRead]:
+        return self.list(
+            organization_id,
+            filters=LeadEventFilters(lead_stage=lead_stage),
+            pagination=pagination,
+            sort=sort,
+        )
 
     def list_by_event_type(
         self,
-        organization_id: UUID,
+        organization_id: UUID | OrganizationContext,
         event_type: str,
         pagination: PaginationOptions | None = None,
         sort: SortOptions | None = None,
     ) -> RepositoryPage[LeadEventRead]:
-        return self._list_scoped(organization_id, {"event_type": event_type}, pagination, sort)
-
-    def _list_scoped(
-        self,
-        organization_id: UUID,
-        filters: dict[str, Any],
-        pagination: PaginationOptions | None,
-        sort: SortOptions | None,
-    ) -> RepositoryPage[LeadEventRead]:
-        pagination = pagination or PaginationOptions()
-        query = self._scoped_select(organization_id)
-        for key, value in filters.items():
-            query = query.eq(key, value)
-        query = self._apply_sort(query, sort)
-        offset, limit = pagination.resolve()
-        response = query.range(offset, offset + limit - 1).execute()
-        rows = response.data or []
-        total = int(response.count or len(rows))
-        return RepositoryPage(
-            items=[self.read_model.model_validate(row) for row in rows],
-            total=total,
-            page=pagination.page or ((offset // max(limit, 1)) + 1),
-            page_size=pagination.page_size or limit,
-            offset=offset,
-            limit=limit,
+        return self.list(
+            organization_id,
+            filters=LeadEventFilters(event_type=event_type),
+            pagination=pagination,
+            sort=sort,
         )

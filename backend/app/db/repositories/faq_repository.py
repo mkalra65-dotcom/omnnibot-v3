@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
 from uuid import UUID
 
 from supabase import Client
@@ -8,54 +7,73 @@ from supabase import Client
 from app.db.models.common import FaqStatus, PaginationOptions, RepositoryPage
 from app.db.models.queries import FaqFilters, SortOptions
 from app.db.models.records import FaqCreate, FaqRead, FaqUpdate
-from app.db.repositories.base_repository import BaseRepository
+from app.db.repositories.base_repository import BaseRepository, OrganizationContext
 
 
 class FaqRepository(BaseRepository[FaqRead, FaqCreate, FaqUpdate, FaqFilters]):
     table_name = "faq_entries"
     read_model = FaqRead
-    sortable_fields = {"created_at", "updated_at", "usage_count", "last_used_at", "question", "normalized_question"}
+    sortable_fields = {
+        "created_at",
+        "updated_at",
+        "question",
+        "normalized_question",
+        "usage_count",
+        "last_used_at",
+    }
 
     def __init__(self, client: Client) -> None:
         super().__init__(client)
 
-    def create(self, organization_id: UUID, payload: FaqCreate | dict[str, Any]) -> FaqRead:
-        return super().create(organization_id, payload)
-
-    def update(
-        self,
-        organization_id: UUID,
-        record_id: UUID,
-        payload: FaqUpdate | dict[str, Any],
-        include_deleted: bool = False,
-    ) -> FaqRead | None:
-        return super().update(organization_id, record_id, payload, include_deleted=include_deleted)
-
     def list_active(
         self,
-        organization_id: UUID,
+        organization_id: UUID | OrganizationContext,
         pagination: PaginationOptions | None = None,
         sort: SortOptions | None = None,
     ) -> RepositoryPage[FaqRead]:
-        filters = FaqFilters(status=FaqStatus.ACTIVE)
-        return self.list(organization_id, filters=filters, pagination=pagination, sort=sort)
+        return self.list(
+            organization_id,
+            filters=FaqFilters(status=FaqStatus.ACTIVE),
+            pagination=pagination,
+            sort=sort,
+        )
 
-    def find_by_normalized_question(self, organization_id: UUID, normalized_question: str) -> FaqRead | None:
+    def list_by_category(
+        self,
+        organization_id: UUID | OrganizationContext,
+        category: str,
+        pagination: PaginationOptions | None = None,
+        sort: SortOptions | None = None,
+    ) -> RepositoryPage[FaqRead]:
+        return self.list(
+            organization_id,
+            filters=FaqFilters(category=category),
+            pagination=pagination,
+            sort=sort,
+        )
+
+    def find_by_normalized_question(
+        self,
+        organization_id: UUID | OrganizationContext,
+        normalized_question: str,
+    ) -> FaqRead | None:
         response = (
             self._scoped_select(organization_id)
             .eq("normalized_question", self._normalize_text(normalized_question))
             .limit(1)
             .execute()
         )
-        rows = response.data or []
-        return self.read_model.model_validate(rows[0]) if rows else None
+        return self._coerce_optional(response.data)
 
-    def increment_usage_count(self, organization_id: UUID, record_id: UUID, increment: int = 1) -> FaqRead | None:
-        current = self.get_by_id(organization_id, record_id)
-        if current is None:
-            return None
-        updated_count = current.usage_count + increment
-        return self.update(organization_id, record_id, {"usage_count": updated_count})
+    def search_by_question(
+        self,
+        organization_id: UUID | OrganizationContext,
+        question_query: str,
+        pagination: PaginationOptions | None = None,
+        sort: SortOptions | None = None,
+    ) -> RepositoryPage[FaqRead]:
+        query = self._scoped_select(organization_id).ilike("question", f"%{question_query.strip()}%")
+        return self._list_with_query(query, pagination=pagination, sort=sort)
 
     def _normalize_text(self, value: str) -> str:
         return " ".join(value.strip().lower().split())
