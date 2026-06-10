@@ -1,0 +1,10 @@
+from app.db.repositories.base_repository import BaseRepository
+from app.db.repositories.conversation_repository import ConversationRepository
+from app.db.repositories.customer_repository import CustomerRepository
+from app.db.repositories.faq_repository import FaqRepository
+from app.db.repositories.lead_event_repository import LeadEventRepository
+from app.db.repositories.message_repository import MessageRepository
+from app.db.repositories.organization_repository import OrganizationRepository
+from app.db.repositories.product_repository import ProductRepository
+from app.db.repositories.subscription_repository import SubscriptionRepository
+
