@@ -1,32 +1,29 @@
 from uuid import UUID
 
-from pydantic import Field
+from app.db.models.common import ChannelType
+from app.db.models.records import MessageRead
+from app.schemas.base import ApiModel
 
-from app.schemas.base import JsonDict, TimestampedModel
 
-
-class MessageBase(TimestampedModel):
-    organization_id: UUID
+class MessageCreateRequest(ApiModel):
     conversation_id: UUID
     customer_id: UUID | None = None
-    channel: str = "whatsapp"
+    channel: ChannelType
     direction: str
     sender_type: str
+    sender_user_id: UUID | None = None
+    external_message_id: str | None = None
+    external_event_id: str | None = None
+    webhook_delivery_id: str | None = None
     message_type: str = "text"
     body: str | None = None
-    provider_message_id: str | None = None
-    status: str = "received"
-    metadata: JsonDict = Field(default_factory=dict)
+    media_url: str | None = None
 
 
-class MessageCreate(MessageBase):
-    pass
-
-
-class MessageUpdate(TimestampedModel):
-    status: str | None = None
-    metadata: JsonDict | None = None
-
-
-class MessageRead(MessageBase):
-    id: UUID
+class MessageListResponse(ApiModel):
+    items: list[MessageRead]
+    total: int
+    page: int
+    page_size: int
+    offset: int
+    limit: int

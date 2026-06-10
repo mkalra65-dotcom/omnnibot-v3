@@ -1,34 +1,43 @@
-from uuid import UUID
+from decimal import Decimal
 
 from pydantic import Field
 
-from app.schemas.base import JsonDict, TimestampedModel
+from app.db.models.common import CustomerStatus, LeadStage
+from app.db.models.records import CustomerIdentityRead, CustomerRead
+from app.schemas.base import ApiModel
 
 
-class CustomerBase(TimestampedModel):
-    organization_id: UUID
-    full_name: str | None = None
+class CustomerCreateRequest(ApiModel):
+    display_name: str | None = None
+    email: str | None = None
     phone_number: str | None = None
-    whatsapp_user_id: str | None = None
-    instagram_handle: str | None = None
-    status: str = "active"
+    status: CustomerStatus = CustomerStatus.LEAD
     tags: list[str] = Field(default_factory=list)
-    metadata: JsonDict = Field(default_factory=dict)
+    profile: dict = Field(default_factory=dict)
 
 
-class CustomerCreate(CustomerBase):
-    pass
-
-
-class CustomerUpdate(TimestampedModel):
-    full_name: str | None = None
+class CustomerUpdateRequest(ApiModel):
+    display_name: str | None = None
+    email: str | None = None
     phone_number: str | None = None
-    whatsapp_user_id: str | None = None
-    instagram_handle: str | None = None
-    status: str | None = None
+    status: CustomerStatus | None = None
     tags: list[str] | None = None
-    metadata: JsonDict | None = None
+    profile: dict | None = None
+    lead_stage: LeadStage | None = None
+    lead_score: Decimal | None = None
 
 
-class CustomerRead(CustomerBase):
-    id: UUID
+class CustomerIdentityCreateRequest(ApiModel):
+    provider: str
+    provider_user_id: str | None = None
+    provider_username: str | None = None
+    provider_phone: str | None = None
+
+
+class CustomerListResponse(ApiModel):
+    items: list[CustomerRead]
+    total: int
+    page: int
+    page_size: int
+    offset: int
+    limit: int

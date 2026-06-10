@@ -2,7 +2,7 @@
 
 - Project: OmniBot V3
 - Target market: Instagram fashion sellers
-- Current phase: Repository layer
+- Current phase: CRM APIs
 - Schema approved: yes
 - Migrations approved: yes
 - Next objective: Repository layer

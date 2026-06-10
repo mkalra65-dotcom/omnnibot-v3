@@ -1,28 +1,41 @@
+from datetime import datetime
 from uuid import UUID
 
-from pydantic import Field
+from app.db.models.common import ChannelType, ConversationStatus
+from app.db.models.records import ConversationRead
+from app.schemas.base import ApiModel
 
-from app.schemas.base import JsonDict, TimestampedModel
 
-
-class ConversationBase(TimestampedModel):
-    organization_id: UUID
+class ConversationCreateRequest(ApiModel):
     customer_id: UUID
-    channel: str = "whatsapp"
-    status: str = "open"
-    assigned_user_id: UUID | None = None
-    metadata: JsonDict = Field(default_factory=dict)
+    channel: ChannelType = ChannelType.MANUAL
+    external_conversation_id: str | None = None
+    status: ConversationStatus = ConversationStatus.OPEN
+    priority: str = "normal"
+    assigned_membership_id: UUID | None = None
+    summary: str | None = None
 
 
-class ConversationCreate(ConversationBase):
-    pass
+class ConversationUpdateRequest(ApiModel):
+    status: ConversationStatus | None = None
+    priority: str | None = None
+    assigned_membership_id: UUID | None = None
+    summary: str | None = None
 
 
-class ConversationUpdate(TimestampedModel):
-    status: str | None = None
-    assigned_user_id: UUID | None = None
-    metadata: JsonDict | None = None
+class HandoffStatusUpdate(ApiModel):
+    handoff_status: str
 
 
-class ConversationRead(ConversationBase):
-    id: UUID
+class FollowupTimestampsUpdate(ApiModel):
+    last_ai_response_at: datetime | None = None
+    last_customer_response_at: datetime | None = None
+
+
+class ConversationListResponse(ApiModel):
+    items: list[ConversationRead]
+    total: int
+    page: int
+    page_size: int
+    offset: int
+    limit: int
