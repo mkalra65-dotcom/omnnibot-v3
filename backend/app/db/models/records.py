@@ -497,6 +497,13 @@ class AiDraftReviewRead(BaseRecord):
     customer_id: UUID | None = None
     source_message_id: UUID | None = None
     ai_interaction_id: UUID | None = None
+    sent_message_id: UUID | None = None
+    sent_by_membership_id: UUID | None = None
+    sent_at: datetime | None = None
+    send_idempotency_key: str | None = None
+    provider_response: dict = Field(default_factory=dict)
+    send_error_code: str | None = None
+    send_error_message: str | None = None
     draft_text: str
     edited_text: str | None = None
     status: str
@@ -512,6 +519,13 @@ class AiDraftReviewCreate(BasePayload):
     customer_id: UUID | None = None
     source_message_id: UUID | None = None
     ai_interaction_id: UUID | None = None
+    sent_message_id: UUID | None = None
+    sent_by_membership_id: UUID | None = None
+    sent_at: datetime | None = None
+    send_idempotency_key: str | None = None
+    provider_response: dict = Field(default_factory=dict)
+    send_error_code: str | None = None
+    send_error_message: str | None = None
     draft_text: str
     edited_text: str | None = None
     status: str = "pending"
@@ -523,6 +537,13 @@ class AiDraftReviewCreate(BasePayload):
 
 
 class AiDraftReviewUpdate(BasePayload):
+    sent_message_id: UUID | None = None
+    sent_by_membership_id: UUID | None = None
+    sent_at: datetime | None = None
+    send_idempotency_key: str | None = None
+    provider_response: dict | None = None
+    send_error_code: str | None = None
+    send_error_message: str | None = None
     edited_text: str | None = None
     status: str | None = None
     approved_by_membership_id: UUID | None = None

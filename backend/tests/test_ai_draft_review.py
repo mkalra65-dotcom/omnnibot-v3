@@ -23,6 +23,7 @@ OTHER_CONVERSATION_ID = UUID("50000000-0000-0000-0000-000000000002")
 CUSTOMER_ID = UUID("60000000-0000-0000-0000-000000000001")
 MESSAGE_ID = UUID("70000000-0000-0000-0000-000000000001")
 AI_INTERACTION_ID = UUID("80000000-0000-0000-0000-000000000001")
+SENT_MESSAGE_ID = UUID("90000000-0000-0000-0000-000000000001")
 
 
 def test_create_pending_review() -> None:
@@ -161,6 +162,37 @@ def test_draft_text_treated_as_untrusted_data() -> None:
     assert edited.edited_text == "Thanks for your message."
     assert edited.metadata["content_trust"] == "ai_generated_untrusted_until_seller_approval"
     assert edited.metadata["seller_approved_content_source"] == "edited_text"
+
+
+def test_outbound_send_fields_update_review_payload_shape() -> None:
+    _, repository, _, _ = _service()
+    review = repository.seed(ORG_A, CONVERSATION_ID, status="approved")
+    sent_at = datetime.now(timezone.utc)
+
+    updated = repository.update(
+        ORG_A,
+        review.id,
+        AiDraftReviewUpdate(
+            status="sent",
+            sent_message_id=SENT_MESSAGE_ID,
+            sent_by_membership_id=MEMBERSHIP_ID,
+            sent_at=sent_at,
+            send_idempotency_key="send-key-1",
+            provider_response={"messages": [{"id": "wamid.outbound-1"}]},
+            send_error_code="meta_timeout",
+            send_error_message="Provider request timed out",
+        ),
+    )
+
+    assert updated is not None
+    assert updated.status == "sent"
+    assert updated.sent_message_id == SENT_MESSAGE_ID
+    assert updated.sent_by_membership_id == MEMBERSHIP_ID
+    assert updated.sent_at == sent_at
+    assert updated.send_idempotency_key == "send-key-1"
+    assert updated.provider_response == {"messages": [{"id": "wamid.outbound-1"}]}
+    assert updated.send_error_code == "meta_timeout"
+    assert updated.send_error_message == "Provider request timed out"
 
 
 class FakeAIDraftReviewRepository:
