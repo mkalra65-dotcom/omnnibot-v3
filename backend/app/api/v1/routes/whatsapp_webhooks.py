@@ -3,6 +3,11 @@ import hmac
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.core.config import settings
+from app.services.whatsapp_customer_identity_resolution import (
+    WhatsAppCustomerIdentityInputError,
+    WhatsAppCustomerIdentityResolutionError,
+    WhatsAppCustomerIdentityResolutionService,
+)
 from app.services.whatsapp_organization_resolution import (
     WhatsAppOrganizationResolutionError,
     WhatsAppOrganizationResolutionService,
@@ -15,6 +20,10 @@ router = APIRouter()
 
 def get_whatsapp_organization_resolution_service() -> WhatsAppOrganizationResolutionService:
     return WhatsAppOrganizationResolutionService()
+
+
+def get_whatsapp_customer_identity_resolution_service() -> WhatsAppCustomerIdentityResolutionService:
+    return WhatsAppCustomerIdentityResolutionService()
 
 
 @router.get("")
@@ -37,10 +46,13 @@ async def verify_whatsapp_webhook(
 @router.post("")
 async def receive_whatsapp_webhook(
     request: Request,
-    resolution_service: WhatsAppOrganizationResolutionService = Depends(
+    organization_resolution_service: WhatsAppOrganizationResolutionService = Depends(
         get_whatsapp_organization_resolution_service
     ),
-) -> dict[str, str]:
+    customer_identity_resolution_service: WhatsAppCustomerIdentityResolutionService = Depends(
+        get_whatsapp_customer_identity_resolution_service
+    ),
+) -> dict[str, str | bool | None]:
     raw_body = await request.body()
     signature_header = request.headers.get("X-Hub-Signature-256")
 
@@ -53,13 +65,25 @@ async def receive_whatsapp_webhook(
 
     try:
         payload = parse_meta_whatsapp_webhook(raw_body)
-        resolution_service.resolve(payload)
+        organization_resolution = organization_resolution_service.resolve(payload)
+        if payload.has_inbound_messages and payload.wa_ids:
+            customer_identity_resolution_service.resolve(
+                payload=payload,
+                organization_resolution=organization_resolution,
+            )
     except MetaWhatsAppPayloadError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Malformed WhatsApp webhook payload",
         ) from exc
+    except WhatsAppCustomerIdentityInputError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Malformed WhatsApp customer identity",
+        ) from exc
     except WhatsAppOrganizationResolutionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
+    except WhatsAppCustomerIdentityResolutionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Customer identity conflict") from exc
 
     return {"status": "accepted"}

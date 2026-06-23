@@ -181,6 +181,24 @@ class CustomerRepository(BaseRepository[CustomerRead, CustomerCreate, CustomerUp
         row = self._first_row(response.data)
         return CustomerIdentityRead.model_validate(row) if row else None
 
+    def list_identities_by_provider_user_id(
+        self,
+        organization_id: UUID | OrganizationContext,
+        provider: str,
+        provider_user_id: str,
+        limit: int = 2,
+    ) -> list[CustomerIdentityRead]:
+        response = (
+            self.client.table("customer_identities")
+            .select("*")
+            .eq("organization_id", str(self._organization_id(organization_id)))
+            .eq("provider", provider.lower())
+            .eq("provider_user_id", provider_user_id)
+            .limit(limit)
+            .execute()
+        )
+        return [CustomerIdentityRead.model_validate(row) for row in response.data or []]
+
     def find_or_create_identity(
         self,
         organization_id: UUID | OrganizationContext,

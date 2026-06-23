@@ -13,6 +13,8 @@ class MetaWhatsAppPayloadError(ValueError):
 class MetaWhatsAppWebhookPayload:
     phone_number_id: str
     whatsapp_business_account_id: str | None
+    wa_ids: tuple[str, ...]
+    has_inbound_messages: bool
     provider_metadata: dict[str, Any]
 
 
@@ -32,6 +34,8 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
     display_phone_numbers: set[str] = set()
     fields: set[str] = set()
     messaging_products: set[str] = set()
+    wa_ids: set[str] = set()
+    has_inbound_messages = False
 
     for entry in _list(payload.get("entry")):
         entry_id = _optional_str(entry.get("id"))
@@ -50,6 +54,14 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
             messaging_product = _optional_str(value.get("messaging_product"))
             if messaging_product:
                 messaging_products.add(messaging_product)
+
+            if _list(value.get("messages")):
+                has_inbound_messages = True
+
+            for contact in _list(value.get("contacts")):
+                wa_id = _optional_str(contact.get("wa_id"))
+                if wa_id:
+                    wa_ids.add(wa_id)
 
             metadata = value.get("metadata")
             if not isinstance(metadata, dict):
@@ -77,6 +89,8 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
         whatsapp_business_account_id=(
             next(iter(whatsapp_business_account_ids)) if whatsapp_business_account_ids else None
         ),
+        wa_ids=tuple(sorted(wa_ids)),
+        has_inbound_messages=has_inbound_messages,
         provider_metadata={
             "provider": "whatsapp",
             "source": "meta",
