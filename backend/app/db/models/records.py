@@ -492,6 +492,46 @@ class AiInteractionCreate(BasePayload):
     metadata: dict = Field(default_factory=dict)
 
 
+class AiDraftReviewRead(BaseRecord):
+    conversation_id: UUID
+    customer_id: UUID | None = None
+    source_message_id: UUID | None = None
+    ai_interaction_id: UUID | None = None
+    draft_text: str
+    edited_text: str | None = None
+    status: str
+    approved_by_membership_id: UUID | None = None
+    rejected_by_membership_id: UUID | None = None
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class AiDraftReviewCreate(BasePayload):
+    conversation_id: UUID
+    customer_id: UUID | None = None
+    source_message_id: UUID | None = None
+    ai_interaction_id: UUID | None = None
+    draft_text: str
+    edited_text: str | None = None
+    status: str = "pending"
+    approved_by_membership_id: UUID | None = None
+    rejected_by_membership_id: UUID | None = None
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class AiDraftReviewUpdate(BasePayload):
+    edited_text: str | None = None
+    status: str | None = None
+    approved_by_membership_id: UUID | None = None
+    rejected_by_membership_id: UUID | None = None
+    approved_at: datetime | None = None
+    rejected_at: datetime | None = None
+    metadata: dict | None = None
+
+
 class SubscriptionPlanRead(BaseIdRecord):
     name: str
     slug: str

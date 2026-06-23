@@ -1,0 +1,31 @@
+from __future__ import annotations
+
+from uuid import UUID
+
+from app.db.models.common import PaginationOptions, RepositoryPage
+from app.db.models.queries import AiDraftReviewFilters, SortOptions
+from app.db.models.records import AiDraftReviewCreate, AiDraftReviewRead, AiDraftReviewUpdate
+from app.db.repositories.base_repository import BaseRepository, OrganizationContext
+
+
+class AiDraftReviewRepository(
+    BaseRepository[AiDraftReviewRead, AiDraftReviewCreate, AiDraftReviewUpdate, AiDraftReviewFilters]
+):
+    table_name = "ai_draft_reviews"
+    read_model = AiDraftReviewRead
+    sortable_fields = {"created_at", "updated_at", "approved_at", "rejected_at"}
+
+    def list_pending(
+        self,
+        organization_id: UUID | OrganizationContext,
+        conversation_id: UUID | None = None,
+        pagination: PaginationOptions | None = None,
+        sort: SortOptions | None = None,
+    ) -> RepositoryPage[AiDraftReviewRead]:
+        filters = AiDraftReviewFilters(status="pending", conversation_id=conversation_id)
+        return self.list(
+            organization_id=organization_id,
+            filters=filters,
+            pagination=pagination,
+            sort=sort,
+        )

@@ -88,6 +88,11 @@ class AiInteractionFilters(BaseListFilters):
     model: str | None = None
 
 
+class AiDraftReviewFilters(BaseListFilters):
+    conversation_id: UUID | None = None
+    customer_id: UUID | None = None
+
+
 class SubscriptionFilters(BaseListFilters):
     status: str | None = None
     plan_slug: str | None = None
