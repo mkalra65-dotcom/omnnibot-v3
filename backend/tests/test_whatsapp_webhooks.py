@@ -4,6 +4,7 @@ from uuid import UUID
 from fastapi.testclient import TestClient
 
 from app.api.v1.routes.whatsapp_webhooks import (
+    get_whatsapp_conversation_resolution_service,
     get_whatsapp_customer_identity_resolution_service,
     get_whatsapp_organization_resolution_service,
 )
@@ -59,6 +60,21 @@ class AcceptingWhatsAppCustomerIdentityResolutionService:
         )
 
 
+class MissingWhatsAppCustomerIdentityResolutionService:
+    calls = 0
+
+    def resolve(self, payload, organization_resolution):
+        self.calls += 1
+        return WhatsAppCustomerIdentityResolution(
+            organization_id=organization_resolution.organization_id,
+            provider="whatsapp",
+            wa_id=payload.wa_ids[0],
+            identity_id=None,
+            customer_id=None,
+            customer_creation_required=True,
+        )
+
+
 class RejectingWhatsAppCustomerIdentityResolutionService:
     def resolve(self, payload, organization_resolution):
         raise WhatsAppCustomerIdentityInputError("malformed")
@@ -70,6 +86,17 @@ class RecordingWhatsAppCustomerIdentityResolutionService:
 
     def resolve(self, payload, organization_resolution):
         self.calls += 1
+        return None
+
+
+class RecordingWhatsAppConversationResolutionService:
+    def __init__(self) -> None:
+        self.calls = 0
+        self.customer_ids = []
+
+    def resolve(self, customer_identity_resolution):
+        self.calls += 1
+        self.customer_ids.append(customer_identity_resolution.customer_id)
         return None
 
 
@@ -126,8 +153,12 @@ def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch) -> None:
         lambda: AcceptingWhatsAppOrganizationResolutionService()
     )
     identity_resolution_service = AcceptingWhatsAppCustomerIdentityResolutionService()
+    conversation_resolution_service = RecordingWhatsAppConversationResolutionService()
     app.dependency_overrides[get_whatsapp_customer_identity_resolution_service] = (
         lambda: identity_resolution_service
+    )
+    app.dependency_overrides[get_whatsapp_conversation_resolution_service] = (
+        lambda: conversation_resolution_service
     )
     raw_body = (FIXTURES_DIR / "meta_whatsapp_text_message.json").read_bytes()
     signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
@@ -147,6 +178,8 @@ def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     assert identity_resolution_service.calls == 1
+    assert conversation_resolution_service.calls == 1
+    assert conversation_resolution_service.customer_ids == [CUSTOMER_ID]
 
 
 def test_post_webhook_rejects_malformed_payload_after_valid_signature(monkeypatch) -> None:
@@ -248,6 +281,42 @@ def test_post_webhook_accepts_status_event_without_customer_identity_resolution(
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     assert identity_resolution_service.calls == 0
+
+
+def test_post_webhook_skips_conversation_resolution_without_customer_id(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
+    identity_resolution_service = MissingWhatsAppCustomerIdentityResolutionService()
+    conversation_resolution_service = RecordingWhatsAppConversationResolutionService()
+    app.dependency_overrides[get_whatsapp_organization_resolution_service] = (
+        lambda: AcceptingWhatsAppOrganizationResolutionService()
+    )
+    app.dependency_overrides[get_whatsapp_customer_identity_resolution_service] = (
+        lambda: identity_resolution_service
+    )
+    app.dependency_overrides[get_whatsapp_conversation_resolution_service] = (
+        lambda: conversation_resolution_service
+    )
+    raw_body = (FIXTURES_DIR / "meta_whatsapp_text_message.json").read_bytes()
+    signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
+
+    try:
+        response = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert identity_resolution_service.calls == 1
+    assert conversation_resolution_service.calls == 0
 
 
 def test_post_webhook_rejects_invalid_signature(monkeypatch) -> None:

@@ -8,6 +8,10 @@ from app.services.whatsapp_customer_identity_resolution import (
     WhatsAppCustomerIdentityResolutionError,
     WhatsAppCustomerIdentityResolutionService,
 )
+from app.services.whatsapp_conversation_resolution import (
+    WhatsAppConversationInputError,
+    WhatsAppConversationResolutionService,
+)
 from app.services.whatsapp_organization_resolution import (
     WhatsAppOrganizationResolutionError,
     WhatsAppOrganizationResolutionService,
@@ -24,6 +28,10 @@ def get_whatsapp_organization_resolution_service() -> WhatsAppOrganizationResolu
 
 def get_whatsapp_customer_identity_resolution_service() -> WhatsAppCustomerIdentityResolutionService:
     return WhatsAppCustomerIdentityResolutionService()
+
+
+def get_whatsapp_conversation_resolution_service() -> WhatsAppConversationResolutionService:
+    return WhatsAppConversationResolutionService()
 
 
 @router.get("")
@@ -52,6 +60,9 @@ async def receive_whatsapp_webhook(
     customer_identity_resolution_service: WhatsAppCustomerIdentityResolutionService = Depends(
         get_whatsapp_customer_identity_resolution_service
     ),
+    conversation_resolution_service: WhatsAppConversationResolutionService = Depends(
+        get_whatsapp_conversation_resolution_service
+    ),
 ) -> dict[str, str | bool | None]:
     raw_body = await request.body()
     signature_header = request.headers.get("X-Hub-Signature-256")
@@ -67,10 +78,12 @@ async def receive_whatsapp_webhook(
         payload = parse_meta_whatsapp_webhook(raw_body)
         organization_resolution = organization_resolution_service.resolve(payload)
         if payload.has_inbound_messages and payload.wa_ids:
-            customer_identity_resolution_service.resolve(
+            customer_identity_resolution = customer_identity_resolution_service.resolve(
                 payload=payload,
                 organization_resolution=organization_resolution,
             )
+            if customer_identity_resolution.customer_id is not None:
+                conversation_resolution_service.resolve(customer_identity_resolution)
     except MetaWhatsAppPayloadError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -80,6 +93,11 @@ async def receive_whatsapp_webhook(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Malformed WhatsApp customer identity",
+        ) from exc
+    except WhatsAppConversationInputError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Malformed WhatsApp conversation resolution",
         ) from exc
     except WhatsAppOrganizationResolutionError as exc:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
