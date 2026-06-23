@@ -1,14 +1,17 @@
 from pathlib import Path
 from uuid import UUID
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.api.v1.routes.whatsapp_webhooks import (
     get_whatsapp_conversation_resolution_service,
     get_whatsapp_customer_identity_resolution_service,
     get_whatsapp_organization_resolution_service,
+    get_webhook_event_repository,
 )
 from app.core.config import settings
+from app.db.models.records import WebhookEventCreate
 from app.main import app
 from app.services.whatsapp_customer_identity_resolution import (
     WhatsAppCustomerIdentityInputError,
@@ -27,6 +30,47 @@ ORGANIZATION_ID = UUID("11111111-1111-1111-1111-111111111111")
 ACCOUNT_ID = UUID("22222222-2222-2222-2222-222222222222")
 IDENTITY_ID = UUID("33333333-3333-3333-3333-333333333333")
 CUSTOMER_ID = UUID("44444444-4444-4444-4444-444444444444")
+
+
+class RecordingWebhookEventRepository:
+    def __init__(self) -> None:
+        self.records: list[WebhookEventCreate] = []
+
+    def get_by_delivery_id(self, provider: str, delivery_id: str):
+        return next(
+            (
+                record
+                for record in self.records
+                if record.provider == provider and record.delivery_id == delivery_id
+            ),
+            None,
+        )
+
+    def get_by_external_event_id(self, provider: str, external_event_id: str):
+        return next(
+            (
+                record
+                for record in self.records
+                if record.provider == provider and record.external_event_id == external_event_id
+            ),
+            None,
+        )
+
+    def create(self, payload: WebhookEventCreate):
+        self.records.append(payload)
+        return payload
+
+
+@pytest.fixture
+def webhook_event_repository() -> RecordingWebhookEventRepository:
+    return RecordingWebhookEventRepository()
+
+
+@pytest.fixture(autouse=True)
+def override_webhook_event_repository(webhook_event_repository):
+    app.dependency_overrides[get_webhook_event_repository] = lambda: webhook_event_repository
+    yield
+    app.dependency_overrides.clear()
 
 
 class AcceptingWhatsAppOrganizationResolutionService:
@@ -147,7 +191,7 @@ def test_get_webhook_verification_rejects_unconfigured_token(monkeypatch) -> Non
     assert response.status_code == 403
 
 
-def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch) -> None:
+def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch, webhook_event_repository) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
     app.dependency_overrides[get_whatsapp_organization_resolution_service] = (
         lambda: AcceptingWhatsAppOrganizationResolutionService()
@@ -180,9 +224,25 @@ def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch) -> None:
     assert identity_resolution_service.calls == 1
     assert conversation_resolution_service.calls == 1
     assert conversation_resolution_service.customer_ids == [CUSTOMER_ID]
+    assert len(webhook_event_repository.records) == 1
+    event = webhook_event_repository.records[0]
+    assert event.provider == "whatsapp"
+    assert event.event_type == "message"
+    assert event.organization_id == ORGANIZATION_ID
+    assert event.account_id == ACCOUNT_ID
+    assert event.phone_number_id == "PHONE_NUMBER_123"
+    assert event.signature_valid is True
+    assert event.resolved is True
+    assert event.external_event_id == "wamid.HBgMOTE5ODc2NTQzMjEwFQIAEhggRkFLRV9NU0dfMQA="
+    assert event.delivery_id is not None
+    assert event.payload_hash is not None
+    assert event.payload is None
+    assert event.received_at is not None
 
 
-def test_post_webhook_rejects_malformed_payload_after_valid_signature(monkeypatch) -> None:
+def test_post_webhook_rejects_malformed_payload_after_valid_signature(
+    monkeypatch, webhook_event_repository
+) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
     raw_body = b'{"object": "whatsapp_business_account"'
     signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
@@ -198,9 +258,12 @@ def test_post_webhook_rejects_malformed_payload_after_valid_signature(monkeypatc
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Malformed WhatsApp webhook payload"}
+    assert webhook_event_repository.records == []
 
 
-def test_post_webhook_rejects_unresolved_organization_after_valid_signature(monkeypatch) -> None:
+def test_post_webhook_rejects_unresolved_organization_after_valid_signature(
+    monkeypatch, webhook_event_repository
+) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
     app.dependency_overrides[get_whatsapp_organization_resolution_service] = (
         lambda: RejectingWhatsAppOrganizationResolutionService()
@@ -221,6 +284,7 @@ def test_post_webhook_rejects_unresolved_organization_after_valid_signature(monk
         app.dependency_overrides.clear()
 
     assert response.status_code == 403
+    assert webhook_event_repository.records == []
 
 
 def test_post_webhook_rejects_malformed_customer_identity_after_organization_resolution(
@@ -253,7 +317,7 @@ def test_post_webhook_rejects_malformed_customer_identity_after_organization_res
 
 
 def test_post_webhook_accepts_status_event_without_customer_identity_resolution(
-    monkeypatch,
+    monkeypatch, webhook_event_repository
 ) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
     identity_resolution_service = RecordingWhatsAppCustomerIdentityResolutionService()
@@ -281,6 +345,58 @@ def test_post_webhook_accepts_status_event_without_customer_identity_resolution(
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     assert identity_resolution_service.calls == 0
+    assert len(webhook_event_repository.records) == 1
+    event = webhook_event_repository.records[0]
+    assert event.event_type == "status"
+    assert event.organization_id == ORGANIZATION_ID
+    assert event.external_event_id == "wamid.HBgMOTE5ODc2NTQzMjEwFQIAEhggRkFLRV9NU0dfMQA="
+    assert event.resolved is True
+
+
+def test_post_webhook_accepts_duplicate_event_without_second_webhook_event(
+    monkeypatch, webhook_event_repository
+) -> None:
+    monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
+    app.dependency_overrides[get_whatsapp_organization_resolution_service] = (
+        lambda: AcceptingWhatsAppOrganizationResolutionService()
+    )
+    identity_resolution_service = AcceptingWhatsAppCustomerIdentityResolutionService()
+    app.dependency_overrides[get_whatsapp_customer_identity_resolution_service] = (
+        lambda: identity_resolution_service
+    )
+    conversation_resolution_service = RecordingWhatsAppConversationResolutionService()
+    app.dependency_overrides[get_whatsapp_conversation_resolution_service] = (
+        lambda: conversation_resolution_service
+    )
+    raw_body = (FIXTURES_DIR / "meta_whatsapp_duplicate_delivery.json").read_bytes()
+    signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
+
+    try:
+        first_response = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+            },
+        )
+        second_response = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.json() == {"status": "accepted"}
+    assert len(webhook_event_repository.records) == 1
+    assert identity_resolution_service.calls == 1
+    assert conversation_resolution_service.calls == 1
 
 
 def test_post_webhook_skips_conversation_resolution_without_customer_id(
@@ -319,7 +435,7 @@ def test_post_webhook_skips_conversation_resolution_without_customer_id(
     assert conversation_resolution_service.calls == 0
 
 
-def test_post_webhook_rejects_invalid_signature(monkeypatch) -> None:
+def test_post_webhook_rejects_invalid_signature(monkeypatch, webhook_event_repository) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
     raw_body = (FIXTURES_DIR / "meta_whatsapp_text_message.json").read_bytes()
 
@@ -333,6 +449,7 @@ def test_post_webhook_rejects_invalid_signature(monkeypatch) -> None:
     )
 
     assert response.status_code == 403
+    assert webhook_event_repository.records == []
 
 
 def test_post_webhook_rejects_missing_signature(monkeypatch) -> None:

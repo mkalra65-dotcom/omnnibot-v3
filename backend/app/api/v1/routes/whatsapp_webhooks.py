@@ -1,8 +1,14 @@
 import hmac
+from datetime import datetime, timezone
+from hashlib import sha256
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from postgrest.exceptions import APIError
 
 from app.core.config import settings
+from app.core.supabase import get_supabase_factory
+from app.db.models.records import WebhookEventCreate
+from app.db.repositories.webhook_event_repository import WebhookEventRepository
 from app.services.whatsapp_customer_identity_resolution import (
     WhatsAppCustomerIdentityInputError,
     WhatsAppCustomerIdentityResolutionError,
@@ -34,6 +40,10 @@ def get_whatsapp_conversation_resolution_service() -> WhatsAppConversationResolu
     return WhatsAppConversationResolutionService()
 
 
+def get_webhook_event_repository() -> WebhookEventRepository:
+    return WebhookEventRepository(get_supabase_factory().get_service_client())
+
+
 @router.get("")
 async def verify_whatsapp_webhook(
     hub_mode: str = Query(alias="hub.mode"),
@@ -63,6 +73,7 @@ async def receive_whatsapp_webhook(
     conversation_resolution_service: WhatsAppConversationResolutionService = Depends(
         get_whatsapp_conversation_resolution_service
     ),
+    webhook_event_repository: WebhookEventRepository = Depends(get_webhook_event_repository),
 ) -> dict[str, str | bool | None]:
     raw_body = await request.body()
     signature_header = request.headers.get("X-Hub-Signature-256")
@@ -77,6 +88,15 @@ async def receive_whatsapp_webhook(
     try:
         payload = parse_meta_whatsapp_webhook(raw_body)
         organization_resolution = organization_resolution_service.resolve(payload)
+        webhook_event_created = _persist_webhook_event(
+            repository=webhook_event_repository,
+            payload=payload,
+            organization_resolution=organization_resolution,
+            raw_body=raw_body,
+            request=request,
+        )
+        if not webhook_event_created:
+            return {"status": "accepted"}
         if payload.has_inbound_messages and payload.wa_ids:
             customer_identity_resolution = customer_identity_resolution_service.resolve(
                 payload=payload,
@@ -105,3 +125,62 @@ async def receive_whatsapp_webhook(
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Customer identity conflict") from exc
 
     return {"status": "accepted"}
+
+
+def _persist_webhook_event(
+    *,
+    repository: WebhookEventRepository,
+    payload,
+    organization_resolution,
+    raw_body: bytes,
+    request: Request,
+) -> bool:
+    provider = "whatsapp"
+    payload_hash = sha256(raw_body).hexdigest()
+    delivery_id = _resolve_delivery_id(request=request, payload_hash=payload_hash)
+
+    if delivery_id is not None and repository.get_by_delivery_id(provider, delivery_id) is not None:
+        return False
+    if (
+        payload.external_event_id is not None
+        and repository.get_by_external_event_id(provider, payload.external_event_id) is not None
+    ):
+        return False
+
+    event = WebhookEventCreate(
+        provider=provider,
+        event_type=payload.event_type,
+        delivery_id=delivery_id,
+        external_event_id=payload.external_event_id,
+        organization_id=organization_resolution.organization_id,
+        account_id=organization_resolution.account_id,
+        phone_number_id=organization_resolution.phone_number_id,
+        signature_valid=True,
+        resolved=True,
+        payload_hash=payload_hash,
+        payload=None,
+        metadata={
+            "source": "meta",
+            "whatsapp_business_account_id": payload.whatsapp_business_account_id,
+        },
+        received_at=datetime.now(timezone.utc),
+    )
+    try:
+        repository.create(event)
+    except APIError as exc:
+        if _is_unique_violation(exc):
+            return False
+        raise
+    return True
+
+
+def _resolve_delivery_id(*, request: Request, payload_hash: str) -> str:
+    for header_name in ("X-Hub-Delivery", "X-Meta-Delivery-ID"):
+        header_value = request.headers.get(header_name)
+        if header_value and header_value.strip():
+            return header_value.strip()
+    return f"meta:{payload_hash}"
+
+
+def _is_unique_violation(exc: APIError) -> bool:
+    return exc.json().get("code") == "23505"

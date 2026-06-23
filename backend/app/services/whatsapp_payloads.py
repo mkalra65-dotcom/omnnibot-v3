@@ -15,6 +15,8 @@ class MetaWhatsAppWebhookPayload:
     whatsapp_business_account_id: str | None
     wa_ids: tuple[str, ...]
     has_inbound_messages: bool
+    event_type: str
+    external_event_id: str | None
     provider_metadata: dict[str, Any]
 
 
@@ -35,6 +37,8 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
     fields: set[str] = set()
     messaging_products: set[str] = set()
     wa_ids: set[str] = set()
+    message_ids: set[str] = set()
+    status_ids: set[str] = set()
     has_inbound_messages = False
 
     for entry in _list(payload.get("entry")):
@@ -55,8 +59,18 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
             if messaging_product:
                 messaging_products.add(messaging_product)
 
-            if _list(value.get("messages")):
+            messages = _list(value.get("messages"))
+            if messages:
                 has_inbound_messages = True
+            for message in messages:
+                message_id = _optional_str(message.get("id"))
+                if message_id:
+                    message_ids.add(message_id)
+
+            for status in _list(value.get("statuses")):
+                status_id = _optional_str(status.get("id"))
+                if status_id:
+                    status_ids.add(status_id)
 
             for contact in _list(value.get("contacts")):
                 wa_id = _optional_str(contact.get("wa_id"))
@@ -91,6 +105,8 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
         ),
         wa_ids=tuple(sorted(wa_ids)),
         has_inbound_messages=has_inbound_messages,
+        event_type=_resolve_event_type(has_inbound_messages, status_ids),
+        external_event_id=_resolve_external_event_id(message_ids, status_ids),
         provider_metadata={
             "provider": "whatsapp",
             "source": "meta",
@@ -113,3 +129,18 @@ def _optional_str(value: Any) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _resolve_event_type(has_inbound_messages: bool, status_ids: set[str]) -> str:
+    if has_inbound_messages:
+        return "message"
+    if status_ids:
+        return "status"
+    return "unknown"
+
+
+def _resolve_external_event_id(message_ids: set[str], status_ids: set[str]) -> str | None:
+    ids = message_ids or status_ids
+    if len(ids) != 1:
+        return None
+    return next(iter(ids))

@@ -167,6 +167,8 @@ def _payload(wa_ids: tuple[str, ...] = (WA_ID,)) -> MetaWhatsAppWebhookPayload:
         whatsapp_business_account_id="WABA_123",
         wa_ids=wa_ids,
         has_inbound_messages=True,
+        event_type="message",
+        external_event_id="wamid.test",
         provider_metadata={},
     )
 
