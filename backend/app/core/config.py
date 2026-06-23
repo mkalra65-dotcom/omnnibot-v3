@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     supabase_anon_key: str = Field(default="")
     supabase_service_role_key: str = Field(default="")
 
+    whatsapp_verify_token: str = Field(default="")
+    whatsapp_app_secret: str = Field(default="")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
