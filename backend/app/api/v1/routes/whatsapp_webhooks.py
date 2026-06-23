@@ -1,4 +1,5 @@
 import hmac
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 
@@ -18,6 +19,7 @@ from app.services.whatsapp_conversation_resolution import (
     WhatsAppConversationInputError,
     WhatsAppConversationResolutionService,
 )
+from app.services.whatsapp_message_persistence import WhatsAppMessagePersistenceService
 from app.services.whatsapp_organization_resolution import (
     WhatsAppOrganizationResolutionError,
     WhatsAppOrganizationResolutionService,
@@ -38,6 +40,10 @@ def get_whatsapp_customer_identity_resolution_service() -> WhatsAppCustomerIdent
 
 def get_whatsapp_conversation_resolution_service() -> WhatsAppConversationResolutionService:
     return WhatsAppConversationResolutionService()
+
+
+def get_whatsapp_message_persistence_service() -> WhatsAppMessagePersistenceService:
+    return WhatsAppMessagePersistenceService()
 
 
 def get_webhook_event_repository() -> WebhookEventRepository:
@@ -73,6 +79,9 @@ async def receive_whatsapp_webhook(
     conversation_resolution_service: WhatsAppConversationResolutionService = Depends(
         get_whatsapp_conversation_resolution_service
     ),
+    message_persistence_service: WhatsAppMessagePersistenceService = Depends(
+        get_whatsapp_message_persistence_service
+    ),
     webhook_event_repository: WebhookEventRepository = Depends(get_webhook_event_repository),
 ) -> dict[str, str | bool | None]:
     raw_body = await request.body()
@@ -95,15 +104,22 @@ async def receive_whatsapp_webhook(
             raw_body=raw_body,
             request=request,
         )
-        if not webhook_event_created:
-            return {"status": "accepted"}
         if payload.has_inbound_messages and payload.wa_ids:
             customer_identity_resolution = customer_identity_resolution_service.resolve(
                 payload=payload,
                 organization_resolution=organization_resolution,
             )
             if customer_identity_resolution.customer_id is not None:
-                conversation_resolution_service.resolve(customer_identity_resolution)
+                conversation_resolution = conversation_resolution_service.resolve(
+                    customer_identity_resolution
+                )
+                message_persistence_service.persist_inbound(
+                    payload=payload,
+                    organization_resolution=organization_resolution,
+                    customer_identity_resolution=customer_identity_resolution,
+                    conversation_resolution=conversation_resolution,
+                    webhook_delivery_id=webhook_event_created.delivery_id,
+                )
     except MetaWhatsAppPayloadError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -127,6 +143,12 @@ async def receive_whatsapp_webhook(
     return {"status": "accepted"}
 
 
+@dataclass(frozen=True, slots=True)
+class WebhookEventPersistenceResult:
+    created: bool
+    delivery_id: str | None
+
+
 def _persist_webhook_event(
     *,
     repository: WebhookEventRepository,
@@ -134,18 +156,18 @@ def _persist_webhook_event(
     organization_resolution,
     raw_body: bytes,
     request: Request,
-) -> bool:
+) -> WebhookEventPersistenceResult:
     provider = "whatsapp"
     payload_hash = sha256(raw_body).hexdigest()
     delivery_id = _resolve_delivery_id(request=request, payload_hash=payload_hash)
 
     if delivery_id is not None and repository.get_by_delivery_id(provider, delivery_id) is not None:
-        return False
+        return WebhookEventPersistenceResult(created=False, delivery_id=delivery_id)
     if (
         payload.external_event_id is not None
         and repository.get_by_external_event_id(provider, payload.external_event_id) is not None
     ):
-        return False
+        return WebhookEventPersistenceResult(created=False, delivery_id=delivery_id)
 
     event = WebhookEventCreate(
         provider=provider,
@@ -169,9 +191,9 @@ def _persist_webhook_event(
         repository.create(event)
     except APIError as exc:
         if _is_unique_violation(exc):
-            return False
+            return WebhookEventPersistenceResult(created=False, delivery_id=delivery_id)
         raise
-    return True
+    return WebhookEventPersistenceResult(created=True, delivery_id=delivery_id)
 
 
 def _resolve_delivery_id(*, request: Request, payload_hash: str) -> str:
