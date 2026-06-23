@@ -2,13 +2,25 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.api.v1.routes.whatsapp_webhooks import get_whatsapp_organization_resolution_service
 from app.core.config import settings
 from app.main import app
+from app.services.whatsapp_organization_resolution import WhatsAppOrganizationResolutionError
 from app.services.whatsapp_signature import build_meta_signature
 
 
 client = TestClient(app)
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+
+
+class AcceptingWhatsAppResolutionService:
+    def resolve(self, payload):
+        return None
+
+
+class RejectingWhatsAppResolutionService:
+    def resolve(self, payload):
+        raise WhatsAppOrganizationResolutionError("unresolved")
 
 
 def test_get_webhook_verification_returns_challenge(monkeypatch) -> None:
@@ -60,7 +72,31 @@ def test_get_webhook_verification_rejects_unconfigured_token(monkeypatch) -> Non
 
 def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
+    app.dependency_overrides[get_whatsapp_organization_resolution_service] = (
+        lambda: AcceptingWhatsAppResolutionService()
+    )
     raw_body = (FIXTURES_DIR / "meta_whatsapp_text_message.json").read_bytes()
+    signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
+
+    try:
+        response = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+
+
+def test_post_webhook_rejects_malformed_payload_after_valid_signature(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
+    raw_body = b'{"object": "whatsapp_business_account"'
     signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
 
     response = client.post(
@@ -72,8 +108,31 @@ def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch) -> None:
         },
     )
 
-    assert response.status_code == 200
-    assert response.json() == {"status": "accepted"}
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Malformed WhatsApp webhook payload"}
+
+
+def test_post_webhook_rejects_unresolved_organization_after_valid_signature(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
+    app.dependency_overrides[get_whatsapp_organization_resolution_service] = (
+        lambda: RejectingWhatsAppResolutionService()
+    )
+    raw_body = (FIXTURES_DIR / "meta_whatsapp_text_message.json").read_bytes()
+    signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
+
+    try:
+        response = client.post(
+            "/api/v1/webhooks/whatsapp",
+            content=raw_body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": signature,
+            },
+        )
+    finally:
+        app.dependency_overrides.clear()
+
+    assert response.status_code == 403
 
 
 def test_post_webhook_rejects_invalid_signature(monkeypatch) -> None:

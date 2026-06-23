@@ -41,16 +41,18 @@ class WhatsAppAccountRepository(
         response = query.limit(1).execute()
         return self._coerce_optional(response.data)
 
-    def get_active_by_phone_number_id(
+    def list_active_by_phone_number_id(
         self,
         phone_number_id: str,
-    ) -> WhatsAppAccountRead | None:
+        limit: int = 2,
+    ) -> list[WhatsAppAccountRead]:
         response = (
             self.client.table(self.table_name)
             .select("*")
             .eq("phone_number_id", phone_number_id)
             .eq("status", WhatsAppAccountStatus.ACTIVE.value)
-            .limit(1)
+            .limit(limit)
             .execute()
         )
-        return self._coerce_optional(response.data)
+        rows = response.data or []
+        return [self._coerce_row(row) for row in rows]

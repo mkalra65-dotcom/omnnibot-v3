@@ -1,11 +1,20 @@
 import hmac
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 
 from app.core.config import settings
+from app.services.whatsapp_organization_resolution import (
+    WhatsAppOrganizationResolutionError,
+    WhatsAppOrganizationResolutionService,
+)
+from app.services.whatsapp_payloads import MetaWhatsAppPayloadError, parse_meta_whatsapp_webhook
 from app.services.whatsapp_signature import validate_meta_signature
 
 router = APIRouter()
+
+
+def get_whatsapp_organization_resolution_service() -> WhatsAppOrganizationResolutionService:
+    return WhatsAppOrganizationResolutionService()
 
 
 @router.get("")
@@ -26,7 +35,12 @@ async def verify_whatsapp_webhook(
 
 
 @router.post("")
-async def receive_whatsapp_webhook(request: Request) -> dict[str, str]:
+async def receive_whatsapp_webhook(
+    request: Request,
+    resolution_service: WhatsAppOrganizationResolutionService = Depends(
+        get_whatsapp_organization_resolution_service
+    ),
+) -> dict[str, str]:
     raw_body = await request.body()
     signature_header = request.headers.get("X-Hub-Signature-256")
 
@@ -36,5 +50,16 @@ async def receive_whatsapp_webhook(request: Request) -> dict[str, str]:
         app_secret=settings.whatsapp_app_secret,
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+    try:
+        payload = parse_meta_whatsapp_webhook(raw_body)
+        resolution_service.resolve(payload)
+    except MetaWhatsAppPayloadError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Malformed WhatsApp webhook payload",
+        ) from exc
+    except WhatsAppOrganizationResolutionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden") from exc
 
     return {"status": "accepted"}
