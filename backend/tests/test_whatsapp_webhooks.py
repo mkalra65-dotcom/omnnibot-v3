@@ -9,6 +9,7 @@ from app.api.v1.routes.whatsapp_webhooks import (
     get_whatsapp_customer_identity_resolution_service,
     get_whatsapp_message_persistence_service,
     get_whatsapp_organization_resolution_service,
+    get_whatsapp_status_update_service,
     get_webhook_event_repository,
 )
 from app.core.config import settings
@@ -72,6 +73,9 @@ def webhook_event_repository() -> RecordingWebhookEventRepository:
 @pytest.fixture(autouse=True)
 def override_webhook_event_repository(webhook_event_repository):
     app.dependency_overrides[get_webhook_event_repository] = lambda: webhook_event_repository
+    app.dependency_overrides[get_whatsapp_status_update_service] = (
+        lambda: RecordingWhatsAppStatusUpdateService()
+    )
     yield
     app.dependency_overrides.clear()
 
@@ -181,6 +185,20 @@ class RecordingWhatsAppMessagePersistenceService:
                 "customer_identity_resolution": customer_identity_resolution,
                 "conversation_resolution": conversation_resolution,
                 "webhook_delivery_id": webhook_delivery_id,
+            }
+        )
+        return []
+
+
+class RecordingWhatsAppStatusUpdateService:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def process_status_events(self, *, status_events, organization_resolution):
+        self.calls.append(
+            {
+                "status_events": status_events,
+                "organization_resolution": organization_resolution,
             }
         )
         return []
@@ -420,11 +438,15 @@ def test_post_webhook_accepts_status_event_without_customer_identity_resolution(
 ) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
     identity_resolution_service = RecordingWhatsAppCustomerIdentityResolutionService()
+    status_update_service = RecordingWhatsAppStatusUpdateService()
     app.dependency_overrides[get_whatsapp_organization_resolution_service] = (
         lambda: AcceptingWhatsAppOrganizationResolutionService()
     )
     app.dependency_overrides[get_whatsapp_customer_identity_resolution_service] = (
         lambda: identity_resolution_service
+    )
+    app.dependency_overrides[get_whatsapp_status_update_service] = (
+        lambda: status_update_service
     )
     raw_body = (FIXTURES_DIR / "meta_whatsapp_status_event.json").read_bytes()
     signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
@@ -444,6 +466,10 @@ def test_post_webhook_accepts_status_event_without_customer_identity_resolution(
     assert response.status_code == 200
     assert response.json() == {"status": "accepted"}
     assert identity_resolution_service.calls == 0
+    assert len(status_update_service.calls) == 1
+    assert status_update_service.calls[0]["organization_resolution"].organization_id == ORGANIZATION_ID
+    assert len(status_update_service.calls[0]["status_events"]) == 1
+    assert status_update_service.calls[0]["status_events"][0].status == "delivered"
     assert len(webhook_event_repository.records) == 1
     event = webhook_event_repository.records[0]
     assert event.event_type == "status"

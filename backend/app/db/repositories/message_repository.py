@@ -54,8 +54,15 @@ class MessageRepository(BaseRepository[MessageRead, MessageCreate, MessageUpdate
         organization_id: UUID | OrganizationContext,
         external_message_id: str,
         channel: ChannelType | str | None = None,
+        direction: str | None = None,
     ) -> MessageRead | None:
-        return self._get_by_external_key("external_message_id", organization_id, external_message_id, channel)
+        return self._get_by_external_key(
+            "external_message_id",
+            organization_id,
+            external_message_id,
+            channel,
+            direction,
+        )
 
     def get_by_external_event_id(
         self,
@@ -79,9 +86,12 @@ class MessageRepository(BaseRepository[MessageRead, MessageCreate, MessageUpdate
         organization_id: UUID | OrganizationContext,
         key_value: str,
         channel: ChannelType | str | None = None,
+        direction: str | None = None,
     ) -> MessageRead | None:
         query = self._scoped_select(organization_id).eq(key_field, key_value)
         if channel is not None:
             query = query.eq("channel", self._serialize(channel))
+        if direction is not None:
+            query = query.eq("direction", direction)
         response = query.limit(1).execute()
         return self._coerce_optional(response.data)

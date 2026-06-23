@@ -11,6 +11,7 @@ from app.api.v1.routes.whatsapp_webhooks import (
     get_whatsapp_customer_identity_resolution_service,
     get_whatsapp_message_persistence_service,
     get_whatsapp_organization_resolution_service,
+    get_whatsapp_status_update_service,
     get_webhook_event_repository,
 )
 from app.core.config import settings
@@ -38,6 +39,7 @@ from app.services.whatsapp_conversation_resolution import WhatsAppConversationRe
 from app.services.whatsapp_customer_identity_resolution import WhatsAppCustomerIdentityResolutionService
 from app.services.whatsapp_message_persistence import WhatsAppMessagePersistenceService
 from app.services.whatsapp_organization_resolution import WhatsAppOrganizationResolutionService
+from app.services.whatsapp_status_updates import WhatsAppStatusUpdateService
 from app.services.whatsapp_signature import build_meta_signature
 
 
@@ -83,6 +85,12 @@ def harness(monkeypatch):
         lambda: WhatsAppMessagePersistenceService(
             message_repository=state.message_repository,
             conversation_repository=state.conversation_repository,
+        )
+    )
+    app.dependency_overrides[get_whatsapp_status_update_service] = (
+        lambda: WhatsAppStatusUpdateService(
+            message_repository=state.message_repository,
+            supabase_factory=None,
         )
     )
     app.dependency_overrides[get_webhook_event_repository] = lambda: state.webhook_event_repository
@@ -188,6 +196,27 @@ def test_status_only_event_creates_webhook_event_and_no_crm_message(harness) -> 
     assert len(harness.webhook_events) == 1
     assert harness.webhook_events[0].event_type == "status"
     assert harness.messages == []
+
+
+def test_status_only_event_updates_matching_outbound_message(harness) -> None:
+    harness.messages.append(
+        _outbound_message(
+            external_message_id="wamid.outbound-1",
+            status=MessageStatus.SENT,
+        )
+    )
+
+    response = _post_signed(
+        _payload(messages=[], statuses=[_status("wamid.outbound-1")], contacts=[])
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "accepted"}
+    assert len(harness.messages) == 1
+    message = harness.messages[0]
+    assert message.status == MessageStatus.DELIVERED
+    assert message.delivered_at == datetime.fromtimestamp(1782144060, tz=timezone.utc)
+    assert message.provider_payload["last_status_event"]["status"] == "delivered"
 
 
 @pytest.mark.parametrize(
@@ -383,7 +412,13 @@ class InMemoryMessageRepository:
         self.created_payloads = []
         self.fail_after_create_count: int | None = None
 
-    def get_by_external_message_id(self, organization_id, external_message_id, channel=None):
+    def get_by_external_message_id(
+        self,
+        organization_id,
+        external_message_id,
+        channel=None,
+        direction=None,
+    ):
         return next(
             (
                 message
@@ -391,6 +426,7 @@ class InMemoryMessageRepository:
                 if message.organization_id == organization_id.organization_id
                 and message.external_message_id == external_message_id
                 and (channel is None or message.channel == channel)
+                and (direction is None or message.direction == direction)
             ),
             None,
         )
@@ -428,6 +464,16 @@ class InMemoryMessageRepository:
             self.fail_after_create_count = None
             raise RuntimeError("simulated failure after partial message persistence")
         return message
+
+    def update(self, organization_id, record_id, payload):
+        for index, message in enumerate(self.state.messages):
+            if (
+                message.organization_id == organization_id.organization_id
+                and message.id == record_id
+            ):
+                self.state.messages[index] = message.model_copy(update=payload)
+                return self.state.messages[index]
+        return None
 
 
 class InMemoryWebhookEventRepository:
@@ -598,4 +644,32 @@ def _conversation(
         status=ConversationStatus.OPEN,
         handoff_status="ai",
         priority="normal",
+    )
+
+
+def _outbound_message(
+    *,
+    external_message_id: str,
+    status: MessageStatus,
+    organization_id: UUID = ORGANIZATION_ID,
+) -> MessageRead:
+    return MessageRead(
+        id=uuid4(),
+        organization_id=organization_id,
+        conversation_id=CONVERSATION_ID,
+        customer_id=CUSTOMER_ID,
+        channel=ChannelType.WHATSAPP,
+        direction="outbound",
+        sender_type="human",
+        external_message_id=external_message_id,
+        message_type="text",
+        body="Outbound reply",
+        status=status,
+        generated_by_ai=False,
+        sent_by_human=True,
+        provider_payload={},
+        metadata={},
+        sent_at=datetime.fromtimestamp(1782144000, tz=timezone.utc)
+        if status == MessageStatus.SENT
+        else None,
     )

@@ -26,6 +26,7 @@ from app.services.whatsapp_organization_resolution import (
 )
 from app.services.whatsapp_payloads import MetaWhatsAppPayloadError, parse_meta_whatsapp_webhook
 from app.services.whatsapp_signature import validate_meta_signature
+from app.services.whatsapp_status_updates import WhatsAppStatusUpdateService
 
 router = APIRouter()
 
@@ -44,6 +45,10 @@ def get_whatsapp_conversation_resolution_service() -> WhatsAppConversationResolu
 
 def get_whatsapp_message_persistence_service() -> WhatsAppMessagePersistenceService:
     return WhatsAppMessagePersistenceService()
+
+
+def get_whatsapp_status_update_service() -> WhatsAppStatusUpdateService:
+    return WhatsAppStatusUpdateService()
 
 
 def get_webhook_event_repository() -> WebhookEventRepository:
@@ -82,6 +87,7 @@ async def receive_whatsapp_webhook(
     message_persistence_service: WhatsAppMessagePersistenceService = Depends(
         get_whatsapp_message_persistence_service
     ),
+    status_update_service: WhatsAppStatusUpdateService = Depends(get_whatsapp_status_update_service),
     webhook_event_repository: WebhookEventRepository = Depends(get_webhook_event_repository),
 ) -> dict[str, str | bool | None]:
     raw_body = await request.body()
@@ -104,6 +110,11 @@ async def receive_whatsapp_webhook(
             raw_body=raw_body,
             request=request,
         )
+        if payload.status_events:
+            status_update_service.process_status_events(
+                status_events=payload.status_events,
+                organization_resolution=organization_resolution,
+            )
         if payload.has_inbound_messages and payload.wa_ids:
             customer_identity_resolution = customer_identity_resolution_service.resolve(
                 payload=payload,

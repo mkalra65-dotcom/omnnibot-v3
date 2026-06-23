@@ -21,6 +21,15 @@ class MetaWhatsAppInboundMessage:
 
 
 @dataclass(frozen=True, slots=True)
+class MetaWhatsAppStatusEvent:
+    external_message_id: str | None
+    status: str | None
+    event_at: datetime | None
+    recipient_id: str | None
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
 class MetaWhatsAppWebhookPayload:
     phone_number_id: str
     whatsapp_business_account_id: str | None
@@ -30,6 +39,7 @@ class MetaWhatsAppWebhookPayload:
     external_event_id: str | None
     provider_metadata: dict[str, Any]
     inbound_messages: tuple[MetaWhatsAppInboundMessage, ...] = ()
+    status_events: tuple[MetaWhatsAppStatusEvent, ...] = ()
 
 
 def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
@@ -53,6 +63,7 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
     status_ids: set[str] = set()
     has_inbound_messages = False
     inbound_messages: list[MetaWhatsAppInboundMessage] = []
+    status_events: list[MetaWhatsAppStatusEvent] = []
 
     for entry in _list(payload.get("entry")):
         entry_id = _optional_str(entry.get("id"))
@@ -85,6 +96,7 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
                 status_id = _optional_str(status.get("id"))
                 if status_id:
                     status_ids.add(status_id)
+                status_events.append(_parse_status_event(status))
 
             for contact in _list(value.get("contacts")):
                 wa_id = _optional_str(contact.get("wa_id"))
@@ -130,6 +142,7 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
             "display_phone_numbers": sorted(display_phone_numbers),
         },
         inbound_messages=tuple(inbound_messages),
+        status_events=tuple(status_events),
     )
 
 
@@ -172,6 +185,42 @@ def _parse_inbound_message(message: dict[str, Any]) -> MetaWhatsAppInboundMessag
         external_created_at=external_created_at,
         metadata={key: value for key, value in metadata.items() if value is not None},
     )
+
+
+def _parse_status_event(status: dict[str, Any]) -> MetaWhatsAppStatusEvent:
+    status_value = _optional_str(status.get("status"))
+    recipient_id = _optional_str(status.get("recipient_id"))
+    metadata: dict[str, Any] = {
+        "provider": "whatsapp",
+        "source": "meta",
+        "status": status_value,
+        "recipient_id": recipient_id,
+    }
+
+    errors = _status_errors(status)
+    if errors:
+        metadata["errors"] = errors
+
+    return MetaWhatsAppStatusEvent(
+        external_message_id=_optional_str(status.get("id")),
+        status=status_value,
+        event_at=_parse_meta_timestamp(status.get("timestamp")),
+        recipient_id=recipient_id,
+        metadata={key: value for key, value in metadata.items() if value is not None},
+    )
+
+
+def _status_errors(status: dict[str, Any]) -> list[dict[str, Any]]:
+    errors: list[dict[str, Any]] = []
+    for error in _list(status.get("errors")):
+        safe_error = {
+            key: error[key]
+            for key in ("code", "title", "message", "error_data")
+            if key in error and isinstance(error[key], (str, int, dict))
+        }
+        if safe_error:
+            errors.append(safe_error)
+    return errors
 
 
 def _message_body(message: dict[str, Any], message_type: str | None) -> str | None:
