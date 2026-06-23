@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     whatsapp_verify_token: str = Field(default="")
     whatsapp_app_secret: str = Field(default="")
+    whatsapp_graph_api_version: str = Field(default="v20.0")
 
     openai_api_key: str = Field(default="")
     openai_model: str = Field(default="gpt-4.1-mini")
