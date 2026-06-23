@@ -7,4 +7,5 @@ from app.db.repositories.message_repository import MessageRepository
 from app.db.repositories.organization_repository import OrganizationRepository
 from app.db.repositories.product_repository import ProductRepository
 from app.db.repositories.subscription_repository import SubscriptionRepository
-
+from app.db.repositories.webhook_event_repository import WebhookEventRepository
+from app.db.repositories.whatsapp_account_repository import WhatsAppAccountRepository

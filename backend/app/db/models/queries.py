@@ -18,6 +18,8 @@ from app.db.models.common import (
     ProductStatus,
     SortDirection,
     TimestampRange,
+    WebhookEventStatus,
+    WhatsAppAccountStatus,
 )
 
 
@@ -52,6 +54,18 @@ class MessageFilters(BaseListFilters):
     sender_type: str | None = None
 
 
+class WhatsAppAccountFilters(BaseListFilters):
+    status: WhatsAppAccountStatus | None = None
+
+
+class WebhookEventFilters(BaseListFilters):
+    status: WebhookEventStatus | None = None
+    provider: str | None = None
+    event_type: str | None = None
+    resolved: bool | None = None
+    phone_number_id: str | None = None
+
+
 class ProductFilters(BaseListFilters):
     status: ProductStatus | None = None
     category: str | None = None
@@ -75,4 +89,3 @@ class SubscriptionFilters(BaseListFilters):
 class SortOptions(BasePayload):
     field: str = "created_at"
     direction: SortDirection = SortDirection.DESC
-

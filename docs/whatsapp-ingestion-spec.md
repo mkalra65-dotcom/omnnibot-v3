@@ -61,11 +61,14 @@ Likely tests:
 - `backend/tests/fixtures/meta_whatsapp_duplicate_delivery.json`
 - `backend/tests/fixtures/meta_whatsapp_unsupported_media.json`
 
+Phase 5A-1 foundation migration:
+
+- Add WhatsApp account mapping table: `whatsapp_accounts`.
+- Add webhook event/idempotency table: `webhook_events`.
+- Keep message-level idempotency on `messages.external_message_id`, scoped by organization and channel.
+
 Likely future migrations, when implementation is approved:
 
-- Add WhatsApp account mapping table, likely `whatsapp_accounts` or generic `organization_integrations`.
-- Add webhook event/idempotency table, likely `webhook_events`.
-- Add unique constraints for WhatsApp `external_message_id` scoped to provider and organization if not already sufficient.
 - Add audit table before sensitive account mapping changes.
 
 ## Webhook Verification GET Flow
@@ -243,11 +246,12 @@ Minimum mapping fields:
 
 - `id`
 - `organization_id`
-- `provider`
 - `whatsapp_business_account_id`
 - `phone_number_id`
 - `display_phone_number`
 - `status`
+- `verify_token_hash`
+- `access_token_secret_ref`
 - `metadata`
 - `created_at`
 - `updated_at`
@@ -343,12 +347,14 @@ Idempotency must prevent duplicate messages from Meta retries and internal retri
 Recommended keys:
 
 - `external_message_id`: Meta `messages[].id`.
-- `webhook_delivery_id`: request-level or derived event ID when available from headers or deterministic payload context.
+- `delivery_id`: request-level or derived event ID when available from headers or deterministic payload context.
 
 Rules:
 
 - Message persistence should be unique by organization, provider, and `external_message_id`.
-- Webhook event persistence, if added, should be unique by provider and `webhook_delivery_id`.
+- Webhook event persistence should be unique by provider and `delivery_id` when present.
+- A webhook delivery may contain multiple messages, so delivery-level idempotency must live in `webhook_events` and must not be the only duplicate guard for `messages`.
+- `messages.webhook_delivery_id`, when populated, is a delivery reference only. Message-level idempotency should primarily use `external_message_id`.
 - Duplicate POSTs should return 200 after confirming the existing persisted result.
 - If a duplicate webhook contains conflicting payload data for the same external message ID, keep the original message immutable and record the conflict for audit/debugging.
 
@@ -486,4 +492,3 @@ Phase 5A implementation will be acceptable when:
 - Instagram ingestion.
 - RAG-backed product and FAQ answers.
 - Advanced automation, followups, and campaign workflows.
-

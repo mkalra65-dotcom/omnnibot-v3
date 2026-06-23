@@ -60,6 +60,22 @@ class MessageStatus(str, Enum):
     DELETED = "deleted"
 
 
+class WhatsAppAccountStatus(str, Enum):
+    ACTIVE = "active"
+    DISABLED = "disabled"
+    PENDING = "pending"
+    REVOKED = "revoked"
+
+
+class WebhookEventStatus(str, Enum):
+    RECEIVED = "received"
+    PROCESSED = "processed"
+    DUPLICATE = "duplicate"
+    IGNORED = "ignored"
+    FAILED = "failed"
+    UNRESOLVED = "unresolved"
+
+
 class ProductStatus(str, Enum):
     ACTIVE = "active"
     DRAFT = "draft"

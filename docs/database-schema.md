@@ -98,6 +98,14 @@ Static SaaS plan definitions. Initial plans are Starter, Growth, and Pro with mo
 
 Current organization subscription state. No payment provider integration is modeled yet.
 
+### whatsapp_accounts
+
+Organization-scoped WhatsApp Cloud API account mapping. Maps an active Meta `phone_number_id` to exactly one organization and stores WABA ID, display phone number, connection status, secret references, and metadata.
+
+### webhook_events
+
+Provider webhook delivery/event ledger for idempotency and operational observability. Supports unresolved platform-level events before an organization is known and resolved organization-scoped events after account mapping succeeds.
+
 ## Key Distinctions
 
 ### purchase_stage vs lead_stage
@@ -112,12 +120,14 @@ Both exist because AI interpretation and business workflow are not the same.
 
 - `supabase/migrations/202606040001_sprint_1_foundation.sql`
 - `supabase/migrations/202606040002_cto_revision_1.sql`
+- `supabase/migrations/202606230001_phase_5a_whatsapp_foundation.sql`
 
 The Revision 1 migration backfills `customer_identities` from legacy customer identity columns and then drops those columns.
 
+The Phase 5A WhatsApp foundation migration adds `whatsapp_accounts` and `webhook_events`. Message-level idempotency remains on `messages.external_message_id` scoped by organization and channel; `webhook_events.delivery_id` is delivery/event-level idempotency and must not be treated as one message per delivery.
+
 ## Deferred Schema
 
-- WhatsApp integration mapping schema is deferred until channel connection and webhook ingestion are implemented. The integration module will own it.
 - `audit_events` or `admin_audit_log` is deferred until sensitive admin mutations and service-role write workflows are implemented. The security/compliance module will own it.
 - `knowledge_sources`, `knowledge_chunks`, and embeddings are deferred until RAG ingestion and retrieval are implemented. The knowledge/RAG module will own them.
 - Billing provider mappings are deferred until a payment provider is selected and webhook handling is implemented. The billing module will own them.

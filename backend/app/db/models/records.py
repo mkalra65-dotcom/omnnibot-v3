@@ -18,6 +18,8 @@ from app.db.models.common import (
     MessageStatus,
     OrganizationStatus,
     ProductStatus,
+    WebhookEventStatus,
+    WhatsAppAccountStatus,
 )
 
 BaseReadModel = BaseIdRecord
@@ -253,6 +255,90 @@ class MessageUpdate(BasePayload):
     delivered_at: datetime | None = None
     read_at: datetime | None = None
     failed_at: datetime | None = None
+
+
+class WhatsAppAccountRead(BaseRecord):
+    phone_number_id: str
+    whatsapp_business_account_id: str | None = None
+    display_phone_number: str | None = None
+    status: WhatsAppAccountStatus
+    verify_token_hash: str | None = None
+    access_token_secret_ref: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class WhatsAppAccountCreate(BasePayload):
+    phone_number_id: str
+    whatsapp_business_account_id: str | None = None
+    display_phone_number: str | None = None
+    status: WhatsAppAccountStatus = WhatsAppAccountStatus.PENDING
+    verify_token_hash: str | None = None
+    access_token_secret_ref: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class WhatsAppAccountUpdate(BasePayload):
+    whatsapp_business_account_id: str | None = None
+    display_phone_number: str | None = None
+    status: WhatsAppAccountStatus | None = None
+    verify_token_hash: str | None = None
+    access_token_secret_ref: str | None = None
+    metadata: dict | None = None
+
+
+class WebhookEventRead(BaseIdRecord):
+    provider: str
+    event_type: str
+    delivery_id: str | None = None
+    external_event_id: str | None = None
+    organization_id: UUID | None = None
+    account_id: UUID | None = None
+    phone_number_id: str | None = None
+    status: WebhookEventStatus
+    signature_valid: bool | None = None
+    resolved: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+    payload_hash: str | None = None
+    payload: dict | None = None
+    metadata: dict = Field(default_factory=dict)
+    received_at: datetime | None = None
+    processed_at: datetime | None = None
+
+
+class WebhookEventCreate(BasePayload):
+    provider: str
+    event_type: str
+    delivery_id: str | None = None
+    external_event_id: str | None = None
+    organization_id: UUID | None = None
+    account_id: UUID | None = None
+    phone_number_id: str | None = None
+    status: WebhookEventStatus = WebhookEventStatus.RECEIVED
+    signature_valid: bool | None = None
+    resolved: bool = False
+    error_code: str | None = None
+    error_message: str | None = None
+    payload_hash: str | None = None
+    payload: dict | None = None
+    metadata: dict = Field(default_factory=dict)
+    received_at: datetime | None = None
+    processed_at: datetime | None = None
+
+
+class WebhookEventUpdate(BasePayload):
+    organization_id: UUID | None = None
+    account_id: UUID | None = None
+    phone_number_id: str | None = None
+    status: WebhookEventStatus | None = None
+    signature_valid: bool | None = None
+    resolved: bool | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    payload_hash: str | None = None
+    payload: dict | None = None
+    metadata: dict | None = None
+    processed_at: datetime | None = None
 
 
 class ProductRead(BaseRecord):
