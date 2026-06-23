@@ -81,6 +81,13 @@ class LeadEventFilters(BaseListFilters):
     event_type: str | None = None
 
 
+class AiInteractionFilters(BaseListFilters):
+    conversation_id: UUID | None = None
+    interaction_type: str | None = None
+    provider: str | None = None
+    model: str | None = None
+
+
 class SubscriptionFilters(BaseListFilters):
     status: str | None = None
     plan_slug: str | None = None

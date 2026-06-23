@@ -1,4 +1,5 @@
 from app.db.repositories.base_repository import BaseRepository
+from app.db.repositories.ai_interaction_repository import AiInteractionRepository
 from app.db.repositories.conversation_repository import ConversationRepository
 from app.db.repositories.customer_repository import CustomerRepository
 from app.db.repositories.faq_repository import FaqRepository

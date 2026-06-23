@@ -458,6 +458,40 @@ class LeadEventCreate(BasePayload):
     metadata: dict = Field(default_factory=dict)
 
 
+class AiInteractionRead(BaseRecord):
+    conversation_id: UUID | None = None
+    message_id: UUID | None = None
+    interaction_type: str
+    status: str
+    provider: str
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int | None = None
+    cost_estimate: Decimal = Decimal("0")
+    request_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
+class AiInteractionCreate(BasePayload):
+    conversation_id: UUID | None = None
+    message_id: UUID | None = None
+    interaction_type: str
+    status: str = "success"
+    provider: str = "openai"
+    model: str
+    input_tokens: int = 0
+    output_tokens: int = 0
+    latency_ms: int | None = None
+    cost_estimate: Decimal = Decimal("0")
+    request_id: str | None = None
+    error_code: str | None = None
+    error_message: str | None = None
+    metadata: dict = Field(default_factory=dict)
+
+
 class SubscriptionPlanRead(BaseIdRecord):
     name: str
     slug: str

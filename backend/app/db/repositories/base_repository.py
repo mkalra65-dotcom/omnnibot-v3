@@ -172,6 +172,11 @@ class BaseRepository(Generic[TRead, TCreate, TUpdate, TFilters]):
             "category",
             "handoff_status",
             "assigned_membership_id",
+            "conversation_id",
+            "customer_id",
+            "interaction_type",
+            "provider",
+            "model",
         )
         for field_name in equality_fields:
             value = getattr(filters, field_name, None)

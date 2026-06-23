@@ -16,6 +16,9 @@ class Settings(BaseSettings):
     whatsapp_verify_token: str = Field(default="")
     whatsapp_app_secret: str = Field(default="")
 
+    openai_api_key: str = Field(default="")
+    openai_model: str = Field(default="gpt-4.1-mini")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",

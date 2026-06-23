@@ -5,3 +5,4 @@ pydantic-settings>=2.2.1
 email-validator>=2.1.1
 supabase>=2.4.0
 python-dotenv>=1.0.1
+openai>=1.0.0
