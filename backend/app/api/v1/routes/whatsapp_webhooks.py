@@ -115,22 +115,32 @@ async def receive_whatsapp_webhook(
                 status_events=payload.status_events,
                 organization_resolution=organization_resolution,
             )
-        if payload.has_inbound_messages and payload.wa_ids:
+        if payload.has_inbound_messages:
             customer_identity_resolution = customer_identity_resolution_service.resolve(
                 payload=payload,
                 organization_resolution=organization_resolution,
             )
-            if customer_identity_resolution.customer_id is not None:
-                conversation_resolution = conversation_resolution_service.resolve(
-                    customer_identity_resolution
+            if customer_identity_resolution.customer_id is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="WhatsApp customer identity did not resolve to a customer",
                 )
-                message_persistence_service.persist_inbound(
-                    payload=payload,
-                    organization_resolution=organization_resolution,
-                    customer_identity_resolution=customer_identity_resolution,
-                    conversation_resolution=conversation_resolution,
-                    webhook_delivery_id=webhook_event_created.delivery_id,
+            conversation_resolution = conversation_resolution_service.resolve(
+                customer_identity_resolution
+            )
+            if conversation_resolution.conversation_resolution_conflict:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="WhatsApp conversation resolution conflict",
                 )
+            persistence_results = message_persistence_service.persist_inbound(
+                payload=payload,
+                organization_resolution=organization_resolution,
+                customer_identity_resolution=customer_identity_resolution,
+                conversation_resolution=conversation_resolution,
+                webhook_delivery_id=webhook_event_created.delivery_id,
+            )
+            _require_successful_message_ingestion(persistence_results)
     except MetaWhatsAppPayloadError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -205,6 +215,18 @@ def _persist_webhook_event(
             return WebhookEventPersistenceResult(created=False, delivery_id=delivery_id)
         raise
     return WebhookEventPersistenceResult(created=True, delivery_id=delivery_id)
+
+
+def _require_successful_message_ingestion(results) -> None:
+    if any(result.persisted or result.duplicate for result in results):
+        return
+    skipped_reasons = {result.skipped_reason for result in results}
+    if skipped_reasons and skipped_reasons <= {"unsupported_message_type_not_persisted"}:
+        return
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Inbound WhatsApp message was not persisted",
+    )
 
 
 def _resolve_delivery_id(*, request: Request, payload_hash: str) -> str:

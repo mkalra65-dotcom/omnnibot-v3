@@ -4,7 +4,7 @@ import pytest
 
 from app.db.models.common import ChannelType, ConversationStatus, PaginationOptions, RepositoryPage
 from app.db.models.queries import ConversationFilters
-from app.db.models.records import ConversationRead
+from app.db.models.records import ConversationCreate, ConversationRead
 from app.services.whatsapp_conversation_resolution import (
     WhatsAppConversationInputError,
     WhatsAppConversationResolutionService,
@@ -24,6 +24,7 @@ class FakeConversationRepository:
     def __init__(self, conversations: list[ConversationRead] | None = None) -> None:
         self.conversations = conversations or []
         self.lookups: list[tuple[UUID, UUID, ConversationFilters | None, PaginationOptions | None]] = []
+        self.created_payloads: list[ConversationCreate] = []
 
     def list_by_customer(
         self,
@@ -55,6 +56,18 @@ class FakeConversationRepository:
             limit=pagination.limit if pagination and pagination.limit else len(matches),
         )
 
+    def create(self, organization_id: UUID, payload: ConversationCreate) -> ConversationRead:
+        self.created_payloads.append(payload)
+        conversation = _conversation(
+            id=OTHER_CONVERSATION_ID,
+            organization_id=organization_id,
+            customer_id=payload.customer_id,
+            channel=payload.channel,
+            status=payload.status,
+        ).model_copy(update={"metadata": payload.metadata})
+        self.conversations.append(conversation)
+        return conversation
+
 
 def test_resolves_existing_open_conversation() -> None:
     repository = FakeConversationRepository(conversations=[_conversation()])
@@ -80,17 +93,19 @@ def test_resolves_existing_open_conversation() -> None:
     assert pagination == PaginationOptions(limit=2)
 
 
-def test_no_conversation_returns_creation_required_without_persistence() -> None:
+def test_no_conversation_creates_open_whatsapp_conversation() -> None:
     repository = FakeConversationRepository()
     service = WhatsAppConversationResolutionService(repository=repository)
 
     resolution = service.resolve(_customer_identity_resolution())
 
-    assert resolution.conversation_id is None
-    assert resolution.existing_conversation is False
-    assert resolution.conversation_creation_required is True
+    assert resolution.conversation_id == OTHER_CONVERSATION_ID
+    assert resolution.existing_conversation is True
+    assert resolution.conversation_creation_required is False
     assert resolution.conversation_resolution_conflict is False
-    assert repository.conversations == []
+    assert repository.created_payloads[0].customer_id == CUSTOMER_ID
+    assert repository.created_payloads[0].channel == ChannelType.WHATSAPP
+    assert repository.created_payloads[0].status == ConversationStatus.OPEN
 
 
 def test_closed_conversation_is_not_reused() -> None:
@@ -101,8 +116,8 @@ def test_closed_conversation_is_not_reused() -> None:
 
     resolution = service.resolve(_customer_identity_resolution())
 
-    assert resolution.conversation_id is None
-    assert resolution.conversation_creation_required is True
+    assert resolution.conversation_id == OTHER_CONVERSATION_ID
+    assert resolution.conversation_creation_required is False
     assert resolution.conversation_resolution_conflict is False
 
 
@@ -120,8 +135,8 @@ def test_same_customer_in_another_organization_does_not_resolve() -> None:
 
     resolution = service.resolve(_customer_identity_resolution())
 
-    assert resolution.conversation_id is None
-    assert resolution.conversation_creation_required is True
+    assert resolution.conversation_id == OTHER_CONVERSATION_ID
+    assert resolution.conversation_creation_required is False
     assert len(repository.lookups) == 1
     lookup_organization_id, lookup_customer_id, filters, pagination = repository.lookups[0]
     assert lookup_organization_id == ORGANIZATION_ID

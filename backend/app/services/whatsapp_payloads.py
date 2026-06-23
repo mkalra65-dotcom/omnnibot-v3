@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -40,6 +40,7 @@ class MetaWhatsAppWebhookPayload:
     provider_metadata: dict[str, Any]
     inbound_messages: tuple[MetaWhatsAppInboundMessage, ...] = ()
     status_events: tuple[MetaWhatsAppStatusEvent, ...] = ()
+    contact_profile_names: dict[str, str] = field(default_factory=dict)
 
 
 def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
@@ -59,6 +60,7 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
     fields: set[str] = set()
     messaging_products: set[str] = set()
     wa_ids: set[str] = set()
+    contact_profile_names: dict[str, str] = {}
     message_ids: set[str] = set()
     status_ids: set[str] = set()
     has_inbound_messages = False
@@ -102,6 +104,11 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
                 wa_id = _optional_str(contact.get("wa_id"))
                 if wa_id:
                     wa_ids.add(wa_id)
+                    profile = contact.get("profile")
+                    if isinstance(profile, dict):
+                        profile_name = _optional_str(profile.get("name"))
+                        if profile_name:
+                            contact_profile_names[wa_id] = profile_name
 
             metadata = value.get("metadata")
             if not isinstance(metadata, dict):
@@ -143,6 +150,7 @@ def parse_meta_whatsapp_webhook(raw_body: bytes) -> MetaWhatsAppWebhookPayload:
         },
         inbound_messages=tuple(inbound_messages),
         status_events=tuple(status_events),
+        contact_profile_names=contact_profile_names,
     )
 
 

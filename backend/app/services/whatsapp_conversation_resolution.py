@@ -6,7 +6,7 @@ from uuid import UUID
 from app.core.supabase import SupabaseClientFactory, get_supabase_factory
 from app.db.models.common import ChannelType, ConversationStatus, PaginationOptions
 from app.db.models.queries import ConversationFilters
-from app.db.models.records import ConversationRead
+from app.db.models.records import ConversationCreate, ConversationRead
 from app.db.repositories.conversation_repository import ConversationRepository
 from app.services.whatsapp_customer_identity_resolution import WhatsAppCustomerIdentityResolution
 
@@ -121,9 +121,22 @@ class WhatsAppConversationResolutionService:
             pagination=PaginationOptions(limit=2),
         ).items
         if not conversations:
-            return WhatsAppConversationResolution.missing(
+            conversation = self.repository.create(
+                organization_id,
+                ConversationCreate(
+                    customer_id=customer_id,
+                    channel=ChannelType.WHATSAPP,
+                    status=ConversationStatus.OPEN,
+                    metadata={
+                        "source": "whatsapp_webhook",
+                        "provider": "whatsapp",
+                    },
+                ),
+            )
+            return WhatsAppConversationResolution.existing(
                 organization_id=organization_id,
                 customer_id=customer_id,
+                conversation=conversation,
             )
         if len(conversations) > 1:
             return WhatsAppConversationResolution.conflict(

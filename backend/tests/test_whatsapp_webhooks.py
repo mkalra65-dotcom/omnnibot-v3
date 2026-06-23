@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import UUID
 
 import pytest
@@ -187,7 +188,7 @@ class RecordingWhatsAppMessagePersistenceService:
                 "webhook_delivery_id": webhook_delivery_id,
             }
         )
-        return []
+        return [SimpleNamespace(persisted=True, duplicate=False, skipped_reason=None)]
 
 
 class RecordingWhatsAppStatusUpdateService:
@@ -210,11 +211,11 @@ class FailingOnceWhatsAppMessagePersistenceService(RecordingWhatsAppMessagePersi
         self.fail_next = True
 
     def persist_inbound(self, **kwargs):
-        super().persist_inbound(**kwargs)
+        results = super().persist_inbound(**kwargs)
         if self.fail_next:
             self.fail_next = False
             raise RuntimeError("message persistence failed after webhook event insert")
-        return []
+        return results
 
 
 def test_get_webhook_verification_returns_challenge(monkeypatch) -> None:
@@ -270,12 +271,15 @@ def test_post_webhook_accepts_valid_raw_body_signature(monkeypatch, webhook_even
         lambda: AcceptingWhatsAppOrganizationResolutionService()
     )
     identity_resolution_service = AcceptingWhatsAppCustomerIdentityResolutionService()
-    conversation_resolution_service = RecordingWhatsAppConversationResolutionService()
+    conversation_resolution_service = ResolvingWhatsAppConversationResolutionService()
     app.dependency_overrides[get_whatsapp_customer_identity_resolution_service] = (
         lambda: identity_resolution_service
     )
     app.dependency_overrides[get_whatsapp_conversation_resolution_service] = (
         lambda: conversation_resolution_service
+    )
+    app.dependency_overrides[get_whatsapp_message_persistence_service] = (
+        lambda: RecordingWhatsAppMessagePersistenceService()
     )
     raw_body = (FIXTURES_DIR / "meta_whatsapp_text_message.json").read_bytes()
     signature = build_meta_signature(raw_body, settings.whatsapp_app_secret)
@@ -489,7 +493,7 @@ def test_post_webhook_accepts_duplicate_event_without_second_webhook_event(
     app.dependency_overrides[get_whatsapp_customer_identity_resolution_service] = (
         lambda: identity_resolution_service
     )
-    conversation_resolution_service = RecordingWhatsAppConversationResolutionService()
+    conversation_resolution_service = ResolvingWhatsAppConversationResolutionService()
     app.dependency_overrides[get_whatsapp_conversation_resolution_service] = (
         lambda: conversation_resolution_service
     )
@@ -576,7 +580,7 @@ def test_post_webhook_retries_message_persistence_when_duplicate_event_already_e
     assert len(message_persistence_service.calls) == 2
 
 
-def test_post_webhook_skips_conversation_resolution_without_customer_id(
+def test_post_webhook_rejects_customer_resolution_without_customer_id(
     monkeypatch,
 ) -> None:
     monkeypatch.setattr(settings, "whatsapp_app_secret", "test-app-secret")
@@ -606,8 +610,8 @@ def test_post_webhook_skips_conversation_resolution_without_customer_id(
     finally:
         app.dependency_overrides.clear()
 
-    assert response.status_code == 200
-    assert response.json() == {"status": "accepted"}
+    assert response.status_code == 500
+    assert response.json() == {"detail": "WhatsApp customer identity did not resolve to a customer"}
     assert identity_resolution_service.calls == 1
     assert conversation_resolution_service.calls == 0
 

@@ -27,7 +27,10 @@ from app.db.models.common import (
 )
 from app.db.models.queries import ConversationFilters
 from app.db.models.records import (
+    ConversationCreate,
     ConversationRead,
+    CustomerCreate,
+    CustomerIdentityCreate,
     CustomerIdentityRead,
     CustomerRead,
     MessageRead,
@@ -184,8 +187,124 @@ def test_cross_organization_safety_does_not_resolve_same_wa_id_in_other_org(harn
     assert response.status_code == 200
     assert len(harness.webhook_events) == 1
     assert harness.webhook_events[0].organization_id == ORGANIZATION_ID
-    assert harness.messages == []
+    assert len(harness.customers) == 2
+    assert len(harness.customer_identities) == 2
+    assert len(harness.conversations) == 2
+    assert len(harness.messages) == 1
+    assert harness.messages[0].organization_id == ORGANIZATION_ID
+    assert harness.messages[0].customer_id != OTHER_CUSTOMER_ID
     assert harness.customer_repository.identity_lookup_organization_ids == [ORGANIZATION_ID]
+
+
+def test_first_time_inbound_text_creates_customer_identity_conversation_message(harness) -> None:
+    harness.customers.clear()
+    harness.customer_identities.clear()
+    harness.conversations.clear()
+
+    response = _post_signed(_payload())
+
+    assert response.status_code == 200
+    assert len(harness.customers) == 1
+    assert len(harness.customer_identities) == 1
+    assert len(harness.conversations) == 1
+    assert len(harness.messages) == 1
+    customer = harness.customers[0]
+    identity = harness.customer_identities[0]
+    conversation = harness.conversations[0]
+    message = harness.messages[0]
+    assert customer.organization_id == ORGANIZATION_ID
+    assert customer.display_name == "Asha Buyer"
+    assert customer.phone_number == WA_ID
+    assert customer.metadata["wa_id"] == WA_ID
+    assert identity.organization_id == ORGANIZATION_ID
+    assert identity.customer_id == customer.id
+    assert identity.provider == "whatsapp"
+    assert identity.provider_user_id == WA_ID
+    assert identity.provider_phone is None
+    assert identity.metadata["wa_id"] == WA_ID
+    assert conversation.organization_id == ORGANIZATION_ID
+    assert conversation.customer_id == customer.id
+    assert conversation.channel == ChannelType.WHATSAPP
+    assert conversation.status == ConversationStatus.OPEN
+    assert message.customer_id == customer.id
+    assert message.conversation_id == conversation.id
+    assert message.external_message_id == "wamid.text-1"
+
+
+def test_first_time_inbound_media_creates_customer_identity_conversation_message(harness) -> None:
+    harness.customers.clear()
+    harness.customer_identities.clear()
+    harness.conversations.clear()
+
+    response = _post_signed(
+        _payload(messages=[_message("wamid.image-first", "image", {"id": "MEDIA_123", "mime_type": "image/jpeg"})])
+    )
+
+    assert response.status_code == 200
+    assert len(harness.customers) == 1
+    assert len(harness.customer_identities) == 1
+    assert len(harness.conversations) == 1
+    assert len(harness.messages) == 1
+    assert harness.messages[0].message_type == "image"
+    assert harness.messages[0].metadata["media"]["id"] == "MEDIA_123"
+
+
+def test_no_open_conversation_creates_conversation(harness) -> None:
+    harness.conversations.clear()
+
+    response = _post_signed(_payload())
+
+    assert response.status_code == 200
+    assert len(harness.conversations) == 1
+    assert harness.conversations[0].customer_id == CUSTOMER_ID
+    assert harness.conversations[0].status == ConversationStatus.OPEN
+    assert harness.messages[0].conversation_id == harness.conversations[0].id
+
+
+def test_existing_open_conversation_reused(harness) -> None:
+    response = _post_signed(_payload())
+
+    assert response.status_code == 200
+    assert len(harness.conversations) == 1
+    assert harness.messages[0].conversation_id == CONVERSATION_ID
+
+
+def test_duplicate_open_conversations_fail_safely_without_message(harness) -> None:
+    harness.conversations.append(_conversation(id=uuid4()))
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = _post_signed(_payload(), client=client)
+
+    assert response.status_code == 409
+    assert response.json() == {"detail": "WhatsApp conversation resolution conflict"}
+    assert harness.messages == []
+
+
+def test_duplicate_inbound_message_does_not_create_duplicate_customer_conversation_or_message(harness) -> None:
+    harness.customers.clear()
+    harness.customer_identities.clear()
+    harness.conversations.clear()
+    raw_body = _payload()
+
+    first_response = _post_signed(raw_body)
+    second_response = _post_signed(raw_body)
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert len(harness.customers) == 1
+    assert len(harness.customer_identities) == 1
+    assert len(harness.conversations) == 1
+    assert len(harness.messages) == 1
+
+
+def test_missing_wa_id_inbound_message_rejected_without_message_loss(harness) -> None:
+    client = TestClient(app, raise_server_exceptions=False)
+
+    response = _post_signed(_payload(contacts=[]), client=client)
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Malformed WhatsApp customer identity"}
+    assert harness.messages == []
 
 
 def test_status_only_event_creates_webhook_event_and_no_crm_message(harness) -> None:
@@ -358,6 +477,45 @@ class InMemoryCustomerRepository:
             None,
         )
 
+    def create(self, organization_id, payload: CustomerCreate):
+        organization_uuid = _organization_id(organization_id)
+        customer = CustomerRead(
+            id=uuid4(),
+            organization_id=organization_uuid,
+            display_name=payload.display_name,
+            email=payload.email,
+            phone_number=payload.phone_number,
+            status=payload.status,
+            lead_score=payload.lead_score,
+            lead_stage=payload.lead_stage,
+            purchase_stage=payload.purchase_stage,
+            lifetime_value_amount=payload.lifetime_value_amount,
+            lifetime_value_currency=payload.lifetime_value_currency,
+            order_count=payload.order_count,
+            first_seen_at=payload.first_seen_at,
+            last_seen_at=payload.last_seen_at,
+            tags=payload.tags,
+            profile=payload.profile,
+            metadata=payload.metadata,
+        )
+        self.state.customers.append(customer)
+        return customer
+
+    def create_identity(self, organization_id, payload: CustomerIdentityCreate):
+        organization_uuid = _organization_id(organization_id)
+        identity = CustomerIdentityRead(
+            id=uuid4(),
+            organization_id=organization_uuid,
+            customer_id=payload.customer_id,
+            provider=payload.provider,
+            provider_user_id=payload.provider_user_id,
+            provider_username=payload.provider_username,
+            provider_phone=payload.provider_phone,
+            metadata=payload.metadata,
+        )
+        self.state.customer_identities.append(identity)
+        return identity
+
 
 class InMemoryConversationRepository:
     def __init__(self, state: InMemoryWhatsAppState) -> None:
@@ -392,10 +550,11 @@ class InMemoryConversationRepository:
         )
 
     def update_last_message(self, organization_id, conversation_id, last_message_id, last_message_at):
-        self.last_message_updates.append((organization_id.organization_id, last_message_id, last_message_at))
+        organization_uuid = _organization_id(organization_id)
+        self.last_message_updates.append((organization_uuid, last_message_id, last_message_at))
         for index, conversation in enumerate(self.state.conversations):
             if (
-                conversation.organization_id == organization_id.organization_id
+                conversation.organization_id == organization_uuid
                 and conversation.id == conversation_id
             ):
                 self.state.conversations[index] = conversation.model_copy(
@@ -404,6 +563,25 @@ class InMemoryConversationRepository:
                         "last_message_at": last_message_at,
                     }
                 )
+
+    def create(self, organization_id, payload: ConversationCreate):
+        organization_uuid = _organization_id(organization_id)
+        conversation = ConversationRead(
+            id=uuid4(),
+            organization_id=organization_uuid,
+            customer_id=payload.customer_id,
+            channel=payload.channel,
+            external_conversation_id=payload.external_conversation_id,
+            status=payload.status,
+            handoff_status=payload.handoff_status,
+            priority=payload.priority,
+            assigned_membership_id=payload.assigned_membership_id,
+            state=payload.state,
+            summary=payload.summary,
+            metadata=payload.metadata,
+        )
+        self.state.conversations.append(conversation)
+        return conversation
 
 
 class InMemoryMessageRepository:
@@ -673,3 +851,7 @@ def _outbound_message(
         if status == MessageStatus.SENT
         else None,
     )
+
+
+def _organization_id(value) -> UUID:
+    return value.organization_id if hasattr(value, "organization_id") else value

@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from uuid import UUID
 
+from postgrest.exceptions import APIError
+
 from app.core.supabase import SupabaseClientFactory, get_supabase_factory
-from app.db.models.records import CustomerIdentityRead, CustomerRead
+from app.db.models.records import CustomerCreate, CustomerIdentityCreate, CustomerIdentityRead, CustomerRead
 from app.db.repositories.customer_repository import CustomerRepository
 from app.services.whatsapp_organization_resolution import WhatsAppOrganizationResolution
 from app.services.whatsapp_payloads import MetaWhatsAppWebhookPayload
@@ -105,8 +107,9 @@ class WhatsAppCustomerIdentityResolutionService:
         if len(identities) > 1:
             raise WhatsAppCustomerIdentityAmbiguousError("WhatsApp customer identity is duplicated")
         if not identities:
-            return WhatsAppCustomerIdentityResolution.missing(
-                organization_id=organization_id,
+            return self._create_customer_identity(
+                payload=payload,
+                organization_resolution=organization_resolution,
                 wa_id=wa_id,
             )
 
@@ -116,6 +119,72 @@ class WhatsAppCustomerIdentityResolutionService:
             raise WhatsAppCustomerIdentityResolutionError(
                 "WhatsApp customer identity is missing its linked customer"
             )
+
+        return WhatsAppCustomerIdentityResolution.existing(
+            organization_id=organization_id,
+            wa_id=wa_id,
+            identity=identity,
+            customer=customer,
+        )
+
+    def _create_customer_identity(
+        self,
+        *,
+        payload: MetaWhatsAppWebhookPayload,
+        organization_resolution: WhatsAppOrganizationResolution,
+        wa_id: str,
+    ) -> WhatsAppCustomerIdentityResolution:
+        organization_id = organization_resolution.organization_id
+        profile_name = payload.contact_profile_names.get(wa_id)
+        customer = self.repository.create(
+            organization_id,
+            CustomerCreate(
+                display_name=profile_name,
+                phone_number=wa_id,
+                metadata={
+                    "source": "whatsapp_webhook",
+                    "provider": WHATSAPP_PROVIDER,
+                    "wa_id": wa_id,
+                    "phone_number_id": organization_resolution.phone_number_id,
+                    "whatsapp_business_account_id": organization_resolution.whatsapp_business_account_id,
+                    "profile_name": profile_name,
+                },
+            ),
+        )
+        try:
+            identity = self.repository.create_identity(
+                organization_id,
+                CustomerIdentityCreate(
+                    customer_id=customer.id,
+                    provider=WHATSAPP_PROVIDER,
+                    provider_user_id=wa_id,
+                    metadata={
+                        "source": "whatsapp_webhook",
+                        "wa_id": wa_id,
+                        "phone_number_id": organization_resolution.phone_number_id,
+                        "whatsapp_business_account_id": organization_resolution.whatsapp_business_account_id,
+                        "profile_name": profile_name,
+                    },
+                ),
+            )
+        except APIError as exc:
+            if _is_unique_violation(exc):
+                identities = self.repository.list_identities_by_provider_user_id(
+                    organization_id=organization_id,
+                    provider=WHATSAPP_PROVIDER,
+                    provider_user_id=wa_id,
+                    limit=2,
+                )
+                if len(identities) == 1:
+                    existing_customer = self.repository.get_by_id(organization_id, identities[0].customer_id)
+                    if existing_customer is not None:
+                        return WhatsAppCustomerIdentityResolution.existing(
+                            organization_id=organization_id,
+                            wa_id=wa_id,
+                            identity=identities[0],
+                            customer=existing_customer,
+                        )
+            raise
 
         return WhatsAppCustomerIdentityResolution.existing(
             organization_id=organization_id,
@@ -144,3 +213,7 @@ class WhatsAppCustomerIdentityResolutionService:
             factory = self._supabase_factory or get_supabase_factory()
             self._repository = CustomerRepository(factory.get_service_client())
         return self._repository
+
+
+def _is_unique_violation(exc: APIError) -> bool:
+    return exc.json().get("code") == "23505"

@@ -4,7 +4,7 @@ from uuid import UUID
 import pytest
 
 from app.db.models.common import CustomerStatus, LeadStage
-from app.db.models.records import CustomerIdentityRead, CustomerRead
+from app.db.models.records import CustomerCreate, CustomerIdentityCreate, CustomerIdentityRead, CustomerRead
 from app.services.whatsapp_customer_identity_resolution import (
     WhatsAppCustomerIdentityAmbiguousError,
     WhatsAppCustomerIdentityInputError,
@@ -34,6 +34,8 @@ class FakeCustomerRepository:
         self.identities = identities or []
         self.customers = customers or []
         self.lookup_organization_ids: list[UUID] = []
+        self.created_customers: list[CustomerCreate] = []
+        self.created_identities: list[CustomerIdentityCreate] = []
 
     def list_identities_by_provider_user_id(
         self,
@@ -58,6 +60,34 @@ class FakeCustomerRepository:
                 return customer
         return None
 
+    def create(self, organization_id: UUID, payload: CustomerCreate) -> CustomerRead:
+        self.created_customers.append(payload)
+        customer = _customer(id=OTHER_CUSTOMER_ID, organization_id=organization_id).model_copy(
+            update={
+                "display_name": payload.display_name,
+                "phone_number": payload.phone_number,
+                "metadata": payload.metadata,
+            }
+        )
+        self.customers.append(customer)
+        return customer
+
+    def create_identity(self, organization_id: UUID, payload: CustomerIdentityCreate) -> CustomerIdentityRead:
+        self.created_identities.append(payload)
+        identity = _identity(
+            id=OTHER_IDENTITY_ID,
+            organization_id=organization_id,
+            customer_id=payload.customer_id,
+            provider_user_id=payload.provider_user_id or "",
+        ).model_copy(
+            update={
+                "provider_phone": payload.provider_phone,
+                "metadata": payload.metadata,
+            }
+        )
+        self.identities.append(identity)
+        return identity
+
 
 def test_resolves_existing_identity() -> None:
     repository = FakeCustomerRepository(
@@ -76,17 +106,22 @@ def test_resolves_existing_identity() -> None:
     assert resolution.customer_creation_required is False
 
 
-def test_missing_identity_returns_creation_required_without_persistence() -> None:
+def test_missing_identity_creates_customer_and_identity() -> None:
     repository = FakeCustomerRepository()
     service = WhatsAppCustomerIdentityResolutionService(repository=repository)
 
     resolution = service.resolve(_payload(), _organization_resolution())
 
-    assert resolution.identity_id is None
-    assert resolution.customer_id is None
-    assert resolution.customer_creation_required is True
-    assert repository.identities == []
-    assert repository.customers == []
+    assert resolution.identity_id == OTHER_IDENTITY_ID
+    assert resolution.customer_id == OTHER_CUSTOMER_ID
+    assert resolution.customer_creation_required is False
+    assert repository.created_customers[0].display_name == "Asha Buyer"
+    assert repository.created_customers[0].phone_number == WA_ID
+    assert repository.created_customers[0].metadata["wa_id"] == WA_ID
+    assert repository.created_identities[0].provider == "whatsapp"
+    assert repository.created_identities[0].provider_user_id == WA_ID
+    assert repository.created_identities[0].provider_phone is None
+    assert repository.created_identities[0].metadata["wa_id"] == WA_ID
 
 
 def test_same_wa_id_in_different_organization_does_not_resolve() -> None:
@@ -106,7 +141,8 @@ def test_same_wa_id_in_different_organization_does_not_resolve() -> None:
 
     resolution = service.resolve(_payload(), _organization_resolution())
 
-    assert resolution.customer_creation_required is True
+    assert resolution.customer_id == OTHER_CUSTOMER_ID
+    assert resolution.customer_creation_required is False
     assert repository.lookup_organization_ids == [ORGANIZATION_ID]
 
 
@@ -170,6 +206,7 @@ def _payload(wa_ids: tuple[str, ...] = (WA_ID,)) -> MetaWhatsAppWebhookPayload:
         event_type="message",
         external_event_id="wamid.test",
         provider_metadata={},
+        contact_profile_names={WA_ID: "Asha Buyer"},
     )
 
 
